@@ -143,13 +143,32 @@ jobs:
         run: npm publish --provenance --access public
 
   publish-mcp-registry:
-    needs: release
+    # Must run AFTER publish-npm so the version exists on npm by the
+    # time the MCP Registry validates `packages[].identifier`.
+    needs: publish-npm
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # github-oidc auth into the MCP Registry
       contents: read
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for npm propagation
+        # `npm publish` returns before the new version is globally
+        # readable from the public registry — usually a few seconds,
+        # sometimes 30s+. Poll until the tag is queryable.
+        run: |
+          version="${GITHUB_REF_NAME#mcp-v}"
+          for i in $(seq 1 24); do
+            if npm view "@buildpulse/mcp@$version" version >/dev/null 2>&1; then
+              echo "npm has @buildpulse/mcp@$version"
+              exit 0
+            fi
+            echo "Waiting for @buildpulse/mcp@$version to propagate (try $i)..."
+            sleep 5
+          done
+          echo "::error::npm version $version never showed up after 2 minutes"
+          exit 1
 
       - name: Install mcp-publisher
         run: |

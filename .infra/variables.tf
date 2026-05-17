@@ -10,7 +10,9 @@ variable "name" {
 
 variable "description" {
   type    = string
-  default = "BuildPulse MCP server (Streamable HTTP) — managed by Terraform"
+  # AWS resource tags only permit: letters, spaces, digits, _ . / = + - : @
+  # No parens, no em-dash. See reference_kms_tag_character_restrictions.
+  default = "BuildPulse MCP server Streamable HTTP - managed by Terraform"
 }
 
 variable "version_tag" {

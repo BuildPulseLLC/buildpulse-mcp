@@ -34,7 +34,7 @@
   ],
   "remotes": [
     {
-      "transportType": "streamable-http",
+      "type": "streamable-http",
       "url": "https://mcp.buildpulse.io/mcp",
       "headers": [
         {

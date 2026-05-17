@@ -23,20 +23,21 @@ import (
 	"time"
 )
 
+// Version is the MCP server's semver. It is overridden at build time
+// by the release workflow via `-ldflags "-X .../mcpserver.Version=..."`
+// — note it MUST be a `var`, not a `const`, for the linker to overwrite.
+// Defaults to "0.0.0-dev" for local `go run`.
+var Version = "0.0.0-dev"
+
 const (
-	// UserAgent identifies the MCP server to the platform API in access
-	// logs. Stamped on every outbound request.
-	UserAgent = "buildpulse-mcp/" + Version
-
-	// Version is the MCP server's semver. Bumped at release time; the
-	// release workflow strips "mcp-v" from the git tag and sets this
-	// via -ldflags at build time. Defaults to "0.0.0-dev" for local
-	// `go run`.
-	Version = "0.0.0-dev"
-
 	// DefaultPlatformURL is the production base URL.
 	DefaultPlatformURL = "https://platform.buildpulse.io"
 )
+
+// UserAgent identifies the MCP server to the platform API in access
+// logs. Stamped on every outbound request. Function (not constant) so
+// it picks up the runtime-overridden Version.
+func userAgent() string { return "buildpulse-mcp/" + Version }
 
 // Client is a thin HTTP client over the BuildPulse Platform API,
 // scoped to a single API token. Safe for concurrent use.
@@ -102,7 +103,7 @@ func (c *Client) Get(ctx context.Context, path string, params url.Values) ([]byt
 	// logs stay consistent.
 	req.Header.Set("Authorization", "token "+c.token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("User-Agent", userAgent())
 
 	resp, err := c.http.Do(req)
 	if err != nil {

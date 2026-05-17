@@ -119,19 +119,24 @@ func main() {
 		})
 	})
 
-	// OAuth authorization-server metadata. We do not implement the
-	// flow yet — this stub returns a `Not Implemented` body that
-	// directs clients to use the Bearer token form for now. When we
-	// wire OAuth, this endpoint advertises authorization_endpoint /
-	// token_endpoint / scopes_supported per RFC 8414.
-	mux.HandleFunc("GET "+wellKnownOAuth, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotImplemented)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":             "oauth_not_yet_supported",
-			"error_description": "Use Bearer <40-hex BuildPulse API token> for now. See https://platform.buildpulse.io/docs/mcp.",
-		})
-	})
+	// OAuth 2.1 authorization server. See oauth.go for the full
+	// design. The flow is:
+	//   /.well-known/oauth-authorization-server  → RFC 8414 metadata
+	//   POST /oauth/register                     → RFC 7591 dynamic registration
+	//   GET  /oauth/authorize                    → redirects to Cognito Hosted UI
+	//   GET  /oauth/callback                     → Cognito redirects back here
+	//   POST /oauth/token                        → code exchange (PKCE)
+	//
+	// When COGNITO_DOMAIN / COGNITO_CLIENT_ID are unset, /authorize
+	// returns 501 with a clear message and the metadata document
+	// surfaces `x-buildpulse-oauth-status=unconfigured`. Bearer-token
+	// auth on the MCP endpoint continues to work either way.
+	oauth := newOAuthServer()
+	mux.HandleFunc("GET "+wellKnownOAuth, oauth.metadata)
+	mux.HandleFunc("POST /oauth/register", oauth.register)
+	mux.HandleFunc("GET /oauth/authorize", oauth.authorize)
+	mux.HandleFunc("GET /oauth/callback", oauth.callback)
+	mux.HandleFunc("POST /oauth/token", oauth.token)
 
 	handler := withRequestID(withLogging(withCORS(mux)))
 

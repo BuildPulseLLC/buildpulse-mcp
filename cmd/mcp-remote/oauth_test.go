@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -14,8 +15,16 @@ import (
 	"time"
 )
 
+// newTestServer returns an oauthServer backed by a fresh in-memory
+// Store — same shape every test wants. Use the Store API to seed
+// state (instead of poking sync.Maps directly).
+func newTestServer() (*oauthServer, *memoryStore) {
+	mem := newMemoryStore()
+	return newOAuthServer(mem), mem
+}
+
 func TestRegisterClient(t *testing.T) {
-	s := newOAuthServer()
+	s, _ := newTestServer()
 
 	body := `{"client_name":"Claude","redirect_uris":["https://claude.ai/cb"]}`
 	req := httptest.NewRequest("POST", "/oauth/register", strings.NewReader(body))
@@ -37,7 +46,7 @@ func TestRegisterClient(t *testing.T) {
 }
 
 func TestRegisterClientRejectsEmptyURIs(t *testing.T) {
-	s := newOAuthServer()
+	s, _ := newTestServer()
 	req := httptest.NewRequest("POST", "/oauth/register",
 		strings.NewReader(`{"client_name":"x","redirect_uris":[]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -49,7 +58,7 @@ func TestRegisterClientRejectsEmptyURIs(t *testing.T) {
 }
 
 func TestAuthorizeUnconfigured(t *testing.T) {
-	s := newOAuthServer()
+	s, _ := newTestServer()
 	// No COGNITO_* env, so authorize should 501 with a clear message
 	// rather than half-implementing the flow.
 	req := httptest.NewRequest("GET", "/oauth/authorize?response_type=code&client_id=x", nil)
@@ -64,12 +73,10 @@ func TestAuthorizeUnconfigured(t *testing.T) {
 }
 
 func TestAuthorizeValidationErrors(t *testing.T) {
-	s := newOAuthServer()
-	// Configure to bypass the unconfigured check.
+	s, mem := newTestServer()
 	s.cognitoDomain = "https://oauth.example.com"
 	s.cognitoClientID = "test-cognito-client"
-	// Register a client so the client_id check passes.
-	s.clients.Store("mcp_test", &registeredClient{
+	_ = mem.PutClient(context.Background(), &registeredClient{
 		ClientID:     "mcp_test",
 		RedirectURIs: []string{"https://app.example/cb"},
 	})
@@ -135,10 +142,10 @@ func TestAuthorizeValidationErrors(t *testing.T) {
 }
 
 func TestAuthorizeRedirectsToCognito(t *testing.T) {
-	s := newOAuthServer()
+	s, mem := newTestServer()
 	s.cognitoDomain = "https://oauth.example.com"
 	s.cognitoClientID = "test-cognito-client"
-	s.clients.Store("mcp_test", &registeredClient{
+	_ = mem.PutClient(context.Background(), &registeredClient{
 		ClientID:     "mcp_test",
 		RedirectURIs: []string{"https://app.example/cb"},
 	})
@@ -166,9 +173,9 @@ func TestAuthorizeRedirectsToCognito(t *testing.T) {
 		t.Errorf("Cognito redirect missing client_id: %s", loc)
 	}
 
-	// One pending auth should be stashed.
+	// One pending auth should be stashed in the store.
 	count := 0
-	s.pending.Range(func(_, _ any) bool { count++; return true })
+	mem.pending.Range(func(_, _ any) bool { count++; return true })
 	if count != 1 {
 		t.Errorf("expected 1 pending auth, got %d", count)
 	}
@@ -192,18 +199,16 @@ func TestPKCEVerification(t *testing.T) {
 }
 
 func TestTokenEndpointFullFlow(t *testing.T) {
-	s := newOAuthServer()
-	// Register a client.
-	s.clients.Store("mcp_test", &registeredClient{
+	s, mem := newTestServer()
+	_ = mem.PutClient(context.Background(), &registeredClient{
 		ClientID:     "mcp_test",
 		RedirectURIs: []string{"https://app.example/cb"},
 	})
 
-	// Stage an authorization code with PKCE challenge.
 	verifier := "static-test-verifier-x-y-z"
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	s.codes.Store("the-code", &authorizationCode{
+	_ = mem.PutCode(context.Background(), &authorizationCode{
 		Code:          "the-code",
 		ClientID:      "mcp_test",
 		RedirectURI:   "https://app.example/cb",
@@ -245,24 +250,16 @@ func TestTokenEndpointFullFlow(t *testing.T) {
 	if tok.ExpiresIn != int(accessTokenTTL.Seconds()) {
 		t.Errorf("expires_in = %d, want %d", tok.ExpiresIn, int(accessTokenTTL.Seconds()))
 	}
-	// Code should have been consumed.
-	if _, ok := s.codes.Load("the-code"); ok {
+	// Code should have been consumed (single-use semantics).
+	if _, err := mem.PopCode(context.Background(), "the-code"); err == nil {
 		t.Error("code should have been deleted after exchange")
-	}
-	// Token should be retrievable.
-	got, ok := s.LookupToken(tok.AccessToken)
-	if !ok {
-		t.Error("LookupToken should find the just-issued token")
-	}
-	if got.UserEmail != "user@example.com" {
-		t.Errorf("user_email = %q, want user@example.com", got.UserEmail)
 	}
 }
 
 func TestTokenEndpointRejectsBadPKCE(t *testing.T) {
-	s := newOAuthServer()
-	s.clients.Store("mcp_test", &registeredClient{ClientID: "mcp_test"})
-	s.codes.Store("the-code", &authorizationCode{
+	s, mem := newTestServer()
+	_ = mem.PutClient(context.Background(), &registeredClient{ClientID: "mcp_test"})
+	_ = mem.PutCode(context.Background(), &authorizationCode{
 		Code:          "the-code",
 		ClientID:      "mcp_test",
 		CodeChallenge: "expected-challenge",
@@ -288,7 +285,7 @@ func TestTokenEndpointRejectsBadPKCE(t *testing.T) {
 }
 
 func TestMetadataDocument(t *testing.T) {
-	s := newOAuthServer()
+	s, _ := newTestServer()
 	s.cognitoDomain = "https://oauth.example.com"
 	s.cognitoClientID = "test"
 	req := httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)
@@ -314,7 +311,7 @@ func TestMetadataDocument(t *testing.T) {
 }
 
 func TestMetadataUnconfiguredFlag(t *testing.T) {
-	s := newOAuthServer()
+	s, _ := newTestServer()
 	req := httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)
 	w := httptest.NewRecorder()
 	s.metadata(w, req)
@@ -322,6 +319,40 @@ func TestMetadataUnconfiguredFlag(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &doc)
 	if doc["x-buildpulse-oauth-status"] != "unconfigured" {
 		t.Errorf("expected unconfigured status, got %v", doc["x-buildpulse-oauth-status"])
+	}
+}
+
+// Memory store basics — keep close to the integration tests so the
+// Store contract has explicit coverage independent of the OAuth flow.
+func TestMemoryStoreRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	m := newMemoryStore()
+
+	if err := m.PutClient(ctx, &registeredClient{ClientID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.GetClient(ctx, "c1"); err != nil || got.ClientID != "c1" {
+		t.Errorf("GetClient got=%v err=%v", got, err)
+	}
+	if _, err := m.GetClient(ctx, "missing"); err != ErrNotFound {
+		t.Errorf("missing client: want ErrNotFound, got %v", err)
+	}
+
+	if err := m.PutCode(ctx, &authorizationCode{Code: "k1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.PopCode(ctx, "k1"); err != nil || got.Code != "k1" {
+		t.Errorf("PopCode got=%v err=%v", got, err)
+	}
+	if _, err := m.PopCode(ctx, "k1"); err != ErrNotFound {
+		t.Errorf("second PopCode: want ErrNotFound, got %v", err)
+	}
+
+	if err := m.PutPending(ctx, "s1", &pendingAuth{ClientID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.PopPending(ctx, "s1"); err != nil || got.ClientID != "c1" {
+		t.Errorf("PopPending got=%v err=%v", got, err)
 	}
 }
 

@@ -86,6 +86,13 @@ resource "aws_ecs_task_definition" "definition" {
         # and persist the resulting mcpSession. Without this, OAuth
         # tokens are minted but won't authenticate on tool calls.
         { name = "MONGODB_URI", value = var.mongodb_uri },
+
+        # OAuth state DynamoDB tables — make the OAuth flow survive
+        # rolling deploys + horizontal scaling. When unset the server
+        # falls back to in-process sync.Maps. See store_init.go.
+        { name = "OAUTH_CLIENTS_TABLE", value = data.terraform_remote_state.environment.outputs.mcp.oauth_clients_table },
+        { name = "OAUTH_CODES_TABLE", value = data.terraform_remote_state.environment.outputs.mcp.oauth_codes_table },
+        { name = "OAUTH_PENDING_TABLE", value = data.terraform_remote_state.environment.outputs.mcp.oauth_pending_table },
       ]
       # The Cognito client secret comes from Secrets Manager so it
       # never lands in the task definition JSON in plaintext. ECS pulls

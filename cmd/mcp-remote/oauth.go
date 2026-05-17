@@ -68,7 +68,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -106,22 +105,27 @@ type oauthServer struct {
 	cognitoClientID string
 	cognitoSecret   string
 
-	clients sync.Map // clientID -> *registeredClient
-	codes   sync.Map // code -> *authorizationCode
-	tokens  sync.Map // accessToken -> *issuedToken
-	pending sync.Map // internalState -> *pendingAuth (during Cognito hop)
+	// State persistence — abstracted behind the Store interface so the
+	// same OAuth code path runs whether we're backed by sync.Maps
+	// (local dev / desired_count=1) or DynamoDB (production HA). See
+	// store.go for the design context.
+	store Store
 
 	// Internal HTTP client for Cognito calls. Carved out so tests can
 	// inject a fake.
 	http *http.Client
 }
 
-func newOAuthServer() *oauthServer {
+func newOAuthServer(store Store) *oauthServer {
+	if store == nil {
+		store = newMemoryStore()
+	}
 	return &oauthServer{
 		issuer:          envOr(envIssuer, defaultIssuer),
 		cognitoDomain:   envOr(envCognitoDomain, ""),
 		cognitoClientID: envOr(envCognitoClientID, ""),
 		cognitoSecret:   envOr(envCognitoSecret, ""),
+		store:           store,
 		http:            &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -149,15 +153,6 @@ type authorizationCode struct {
 	UserEmail       string
 	OrganizationIDs []string // org UUIDs resolved at callback time
 	Expires         time.Time
-}
-
-type issuedToken struct {
-	Token       string
-	ClientID    string
-	UserSubject string
-	UserEmail   string
-	Scope       string
-	Expires     time.Time
 }
 
 // pendingAuth bridges the original /authorize request to the Cognito
@@ -199,7 +194,10 @@ func (s *oauthServer) register(w http.ResponseWriter, r *http.Request) {
 		GrantTypes:   defaultIfEmpty(req.GrantTypes, []string{"authorization_code", "refresh_token"}),
 		CreatedAt:    time.Now(),
 	}
-	s.clients.Store(clientID, c)
+	if err := s.store.PutClient(r.Context(), c); err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error", "failed to persist client registration")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -229,12 +227,11 @@ func (s *oauthServer) authorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "unsupported_response_type", "only 'code' is supported")
 		return
 	}
-	clientAny, ok := s.clients.Load(clientID)
-	if !ok {
+	client, err := s.store.GetClient(r.Context(), clientID)
+	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_client", "unknown client_id; register via /oauth/register first")
 		return
 	}
-	client := clientAny.(*registeredClient)
 	if !contains(client.RedirectURIs, redirectURI) {
 		oauthError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri was not registered")
 		return
@@ -252,14 +249,17 @@ func (s *oauthServer) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	internalState := randomHex(16)
-	s.pending.Store(internalState, &pendingAuth{
+	if err := s.store.PutPending(r.Context(), internalState, &pendingAuth{
 		ClientID:      clientID,
 		RedirectURI:   redirectURI,
 		CodeChallenge: codeChallenge,
 		OriginalState: state,
 		Scope:         scope,
 		Expires:       time.Now().Add(15 * time.Minute),
-	})
+	}); err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error", "failed to persist authorization state")
+		return
+	}
 
 	cognitoURL := s.cognitoDomain + "/oauth2/authorize?" + url.Values{
 		"response_type": {"code"},
@@ -282,12 +282,11 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pendingAny, ok := s.pending.LoadAndDelete(internalState)
-	if !ok {
+	pending, err := s.store.PopPending(r.Context(), internalState)
+	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "no pending authorization for this state")
 		return
 	}
-	pending := pendingAny.(*pendingAuth)
 	if time.Now().After(pending.Expires) {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "authorization request has expired; restart from /authorize")
 		return
@@ -315,7 +314,7 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code := randomHex(32)
-	s.codes.Store(code, &authorizationCode{
+	if err := s.store.PutCode(r.Context(), &authorizationCode{
 		Code:            code,
 		ClientID:        pending.ClientID,
 		RedirectURI:     pending.RedirectURI,
@@ -325,7 +324,10 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		UserEmail:       idClaims.Email,
 		OrganizationIDs: orgIDs,
 		Expires:         time.Now().Add(authCodeTTL),
-	})
+	}); err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error", "failed to persist authorization code")
+		return
+	}
 
 	finalRedirect := pending.RedirectURI
 	sep := "?"
@@ -358,13 +360,11 @@ func (s *oauthServer) token(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PostFormValue("client_id")
 	redirectURI := r.PostFormValue("redirect_uri")
 
-	authAny, ok := s.codes.LoadAndDelete(code)
-	if !ok {
+	auth, err := s.store.PopCode(r.Context(), code)
+	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "code is unknown or has already been used")
 		return
 	}
-	auth := authAny.(*authorizationCode)
-
 	if time.Now().After(auth.Expires) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "code has expired (60s TTL)")
 		return
@@ -390,14 +390,6 @@ func (s *oauthServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessToken := randomHex(20) // 40-hex chars — same shape as platform-api tokens
-	s.tokens.Store(accessToken, &issuedToken{
-		Token:       accessToken,
-		ClientID:    auth.ClientID,
-		UserSubject: auth.UserSubject,
-		UserEmail:   auth.UserEmail,
-		Scope:       auth.Scope,
-		Expires:     time.Now().Add(accessTokenTTL),
-	})
 
 	// Persist the session in DocumentDB so platform-api's auth
 	// middleware accepts the token on tool calls. Errors are logged
@@ -452,25 +444,10 @@ func (s *oauthServer) metadata(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(doc)
 }
 
-// LookupToken returns the user identity associated with an
-// MCP-issued Bearer token. The Streamable HTTP handler can call this
-// to short-circuit the platform-api token-validation path for any
-// token format starting "mcp_" or — for the scaffold — any 40-hex
-// token that we issued ourselves.
-//
-// Returns (nil, false) if the token is unknown OR has expired.
-func (s *oauthServer) LookupToken(token string) (*issuedToken, bool) {
-	v, ok := s.tokens.Load(token)
-	if !ok {
-		return nil, false
-	}
-	t := v.(*issuedToken)
-	if time.Now().After(t.Expires) {
-		s.tokens.Delete(token)
-		return nil, false
-	}
-	return t, true
-}
+// (LookupToken / s.tokens removed — the in-process token map was
+// redundant once mcpSessions in DocumentDB became the source of
+// truth. platform-api's auth middleware reads mcpSessions on every
+// /api call; nothing in the MCP HTTP path needed a local cache.)
 
 // --- Cognito glue --------------------------------------------------------
 

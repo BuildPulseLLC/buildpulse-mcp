@@ -138,7 +138,11 @@ func main() {
 	// returns 501 with a clear message and the metadata document
 	// surfaces `x-buildpulse-oauth-status=unconfigured`. Bearer-token
 	// auth on the MCP endpoint continues to work either way.
-	oauth := newOAuthServer()
+	//
+	// Store: DynamoDB when the three OAUTH_* table names are set,
+	// in-memory otherwise. See store.go for the design.
+	store := buildOAuthStore(context.Background())
+	oauth := newOAuthServer(store)
 	mux.HandleFunc("GET "+wellKnownOAuth, oauth.metadata)
 	mux.HandleFunc("POST /oauth/register", oauth.register)
 	mux.HandleFunc("GET /oauth/authorize", oauth.authorize)

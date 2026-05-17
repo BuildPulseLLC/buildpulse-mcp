@@ -4,7 +4,7 @@
 # Go image, copy into a distroless runtime, run as nonroot. Image is
 # pushed to the `mcp-remote` ECR repo and deployed by `.infra/mcp/`.
 
-FROM golang:1.24-bookworm AS build
+FROM golang:1.25-bookworm AS build
 
 WORKDIR /src
 

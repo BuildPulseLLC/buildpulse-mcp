@@ -1,0 +1,43 @@
+{
+  "name": "@buildpulse/mcp",
+  "version": "0.1.0",
+  "description": "BuildPulse Model Context Protocol server — flaky test analytics, coverage, and CI run history as agent-callable tools.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "buildpulse",
+    "ci",
+    "flaky-tests",
+    "test-analytics",
+    "claude",
+    "cursor",
+    "anthropic"
+  ],
+  "homepage": "https://platform.buildpulse.io/docs",
+  "bugs": {
+    "url": "https://github.com/BuildPulseLLC/buildpulse-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BuildPulseLLC/buildpulse-mcp.git",
+    "directory": "npm"
+  },
+  "license": "MIT",
+  "bin": {
+    "buildpulse-mcp": "bin/buildpulse-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node ./lib/install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

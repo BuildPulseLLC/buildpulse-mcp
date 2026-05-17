@@ -1,0 +1,71 @@
+# Smithery.ai manifest for the BuildPulse MCP server.
+#
+# Smithery is a discovery + one-command-install registry for MCP
+# servers. Once submitted to https://smithery.ai, users can install
+# via:
+#
+#   npx -y @smithery/cli install @buildpulse/mcp --client claude
+#   npx -y @smithery/cli install @buildpulse/mcp --client cursor
+#
+# …and Smithery writes the `mcpServers` entry into their client's
+# config file. We surface the same `BUILDPULSE_TOKEN` requirement here
+# so the CLI prompts for it during install.
+
+name: buildpulse
+displayName: BuildPulse
+description: |
+  Surface flaky tests, CI run history, and coverage health from
+  BuildPulse directly inside Claude, Cursor, ChatGPT, and any
+  MCP-aware agent. Five intent-shaped tools, four guided prompts,
+  and resource templates for repo state.
+homepage: https://platform.buildpulse.io/docs/mcp
+license: MIT
+authors:
+  - name: BuildPulse
+    url: https://buildpulse.io
+
+# How Smithery should run the server. stdio is the universal path —
+# the same `npx @buildpulse/mcp` invocation the docs show.
+runtime: nodejs
+startCommand:
+  type: stdio
+  command: npx
+  args:
+    - "-y"
+    - "@buildpulse/mcp"
+
+# Required configuration. Smithery prompts the user for each item and
+# writes it into the `env` block of the installed mcpServers config.
+configSchema:
+  type: object
+  required: [BUILDPULSE_TOKEN]
+  properties:
+    BUILDPULSE_TOKEN:
+      type: string
+      title: BuildPulse API token
+      description: >
+        40-character hexadecimal API token. Generate one at
+        app.buildpulse.io → Organization Settings → API Tokens.
+      pattern: "^[0-9a-f]{40}$"
+    PLATFORM_API_URL:
+      type: string
+      title: Platform API URL
+      description: >
+        Override the default platform.buildpulse.io base URL — useful
+        only for connecting to the BuildPulse development environment.
+      default: https://platform.buildpulse.io
+
+# Tag the server so Smithery surfaces it under the right discovery
+# categories.
+categories:
+  - developer-tools
+  - testing
+  - ci-cd
+  - observability
+keywords:
+  - ci
+  - flaky-tests
+  - test-analytics
+  - coverage
+  - buildpulse
+  - mcp

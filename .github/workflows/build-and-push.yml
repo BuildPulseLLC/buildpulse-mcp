@@ -1,0 +1,93 @@
+name: Build and Push to ECR
+
+# Builds cmd/mcp-remote and deploys the hosted Streamable HTTP MCP at
+# mcp.buildpulse.io. Same OIDC role + ECR registry + Terraform backend
+# bucket as platform-api, with its own ECS service + ALB listener rule
+# defined in .infra/.
+
+on:
+  push:
+    branches:
+      - main
+      - feat/**
+      - fix/**
+  workflow_dispatch: # manual redeploy from the Actions UI
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
+  CI_COMMIT_SHA: ${{ github.sha }}
+  NAME: mcp-remote
+  ENVIRONMENT: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+  TF_IN_AUTOMATION: true
+  TF_VAR_backend_bucket: ${{ vars.BACKEND_BUCKET }}
+  TF_VAR_environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+  TF_VAR_version_tag: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GA_ROLE }}
+          aws-region: ${{ vars.AWS_DEFAULT_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        # cmd/mcp-remote/Dockerfile builds from the repo root so the
+        # Go module + internal/ tree are in scope. -f points the build
+        # at the MCP-specific Dockerfile; context stays at root.
+        run: |
+          docker build \
+            -f cmd/mcp-remote/Dockerfile \
+            --build-arg VERSION=${{ env.CI_COMMIT_SHA }} \
+            -t ${{ env.NAME }}:${{ env.CI_COMMIT_SHA }} \
+            -t ${{ env.NAME }}:latest \
+            .
+
+      - name: Push Docker image to ECR
+        run: |
+          docker tag ${{ env.NAME }}:${{ env.CI_COMMIT_SHA }} ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT }}-${{ env.NAME }}:${{ env.CI_COMMIT_SHA }}
+          docker tag ${{ env.NAME }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT }}-${{ env.NAME }}:latest
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT }}-${{ env.NAME }}:${{ env.CI_COMMIT_SHA }}
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT }}-${{ env.NAME }}:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.GA_ROLE }}
+          aws-region: ${{ vars.AWS_DEFAULT_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+
+      - name: Terraform Init and Apply
+        run: |
+          cd .infra
+          terraform init \
+            -backend-config="key=$TF_VAR_environment/$NAME.tfstate" \
+            -backend-config="bucket=$TF_VAR_backend_bucket" \
+            -backend-config="region=$AWS_DEFAULT_REGION"
+          terraform apply -auto-approve

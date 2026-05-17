@@ -1,0 +1,230 @@
+/******************************************
+ALB - Target Group and Listener Rule
+******************************************/
+
+resource "aws_lb_target_group" "group" {
+  name        = "${var.environment}-${var.name}"
+  port        = 80
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = data.terraform_remote_state.environment.outputs.vpc.id
+
+  tags = {
+    Description = var.description
+    Environment = var.environment
+    Name        = var.name
+  }
+
+  health_check {
+    interval = 60
+    matcher  = "200"
+    path     = "/health"
+    timeout  = 10
+  }
+}
+
+resource "aws_lb_listener_rule" "listener_rule" {
+  listener_arn = data.terraform_remote_state.environment.outputs.public_alb.https_listener
+  priority     = var.priority
+
+  action {
+    target_group_arn = aws_lb_target_group.group.arn
+    type             = "forward"
+  }
+
+  condition {
+    host_header {
+      values = [var.domain[var.environment]]
+    }
+  }
+}
+
+/******************************************
+ECS - Task Definition
+
+Two notable differences vs. platform-api:
+
+  - PORT is unset; the binary defaults to 8080.
+  - PLATFORM_API_URL is the only required env var; the MCP doesn't
+    touch the database. Authentication is per-request: the
+    Authorization header is forwarded to the platform API for
+    validation on every tool call.
+
+The image reference `ecr.mcp_remote` must exist in the environment/
+remote state — see ./README.md prerequisites.
+******************************************/
+
+resource "aws_ecs_task_definition" "definition" {
+  cpu                      = 256
+  execution_role_arn       = data.terraform_remote_state.environment.outputs.iam.ecs_task_execution_role_arn
+  family                   = "${var.environment}-${var.name}"
+  memory                   = 512
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  task_role_arn            = data.terraform_remote_state.environment.outputs.iam.ecs_task_execution_role_arn
+  container_definitions = jsonencode([
+    {
+      essential         = true
+      image             = "${data.terraform_remote_state.environment.outputs.ecr.mcp_remote}:${var.version_tag}"
+      memory            = 512
+      memoryReservation = 512
+      cpu               = 256
+      name              = var.name
+      environment = [
+        { name = "ENVIRONMENT",      value = var.environment },
+        { name = "PLATFORM_API_URL", value = local.platform_api_url },
+      ]
+      portMappings = [{
+        containerPort = 8080
+        hostPort      = 8080
+        protocol      = "tcp"
+      }]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/aws/ecs/${var.environment}"
+          "awslogs-region"        = data.aws_region.current.name
+          "awslogs-stream-prefix" = var.name
+        }
+      }
+    }
+  ])
+
+  tags = {
+    Description = var.description
+    Environment = var.environment
+    Version     = var.version_tag
+    Name        = "${var.environment}-${var.name}"
+  }
+}
+
+locals {
+  default_platform_api_url = {
+    development = "https://platform.dev.buildpulse.io"
+    production  = "https://platform.buildpulse.io"
+  }
+  platform_api_url = var.platform_api_url != "" ? var.platform_api_url : local.default_platform_api_url[var.environment]
+}
+
+/******************************************
+ECS - Service
+******************************************/
+
+resource "aws_ecs_service" "service" {
+  cluster         = data.terraform_remote_state.environment.outputs.ecs.primary_cluster_id
+  desired_count   = 1
+  launch_type     = "FARGATE"
+  name            = var.name
+  task_definition = aws_ecs_task_definition.definition.arn
+
+  network_configuration {
+    assign_public_ip = false
+    security_groups  = [data.terraform_remote_state.environment.outputs.vpc.private_security_group]
+    subnets          = data.terraform_remote_state.environment.outputs.vpc.private_subnets
+  }
+
+  load_balancer {
+    container_name   = var.name
+    container_port   = 8080
+    target_group_arn = aws_lb_target_group.group.arn
+  }
+
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
+  tags = {
+    Description = var.description
+    Environment = var.environment
+    Name        = var.name
+  }
+}
+
+/******************************************
+ECS - Auto Scaling
+
+Streamable HTTP keeps connections open for SSE; CPU stays low but
+concurrent connection count drives scaling needs. We scale on CPU as
+a proxy until we have a custom metric for in-flight MCP sessions.
+******************************************/
+
+resource "aws_appautoscaling_target" "ecs" {
+  max_capacity       = 5
+  min_capacity       = 1
+  resource_id        = "service/${var.environment}/${aws_ecs_service.service.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "cpu" {
+  name               = "${var.environment}-${var.name}-cpu-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value       = 60
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+  }
+}
+
+/********************************
+ * CloudWatch Alarms
+ ********************************/
+
+resource "aws_cloudwatch_metric_alarm" "ecs_cpu" {
+  alarm_name          = "${var.environment}-${var.name}-cpu"
+  alarm_description   = "MCP service ${var.name} CPU utilization is high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 80
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = var.environment
+    ServiceName = aws_ecs_service.service.name
+  }
+
+  alarm_actions = [data.terraform_remote_state.environment.outputs.sns.ops_alerts_topic_arn]
+
+  tags = {
+    Description = var.description
+    Environment = var.environment
+    Name        = var.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
+  alarm_name          = "${var.environment}-${var.name}-unhealthy-hosts"
+  alarm_description   = "MCP service ${var.name} has unhealthy ALB targets"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = data.terraform_remote_state.environment.outputs.public_alb.arn_suffix
+    TargetGroup  = aws_lb_target_group.group.arn_suffix
+  }
+
+  alarm_actions = [data.terraform_remote_state.environment.outputs.sns.ops_alerts_topic_arn]
+
+  tags = {
+    Description = var.description
+    Environment = var.environment
+    Name        = var.name
+  }
+}

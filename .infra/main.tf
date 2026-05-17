@@ -137,8 +137,13 @@ ECS - Service
 ******************************************/
 
 resource "aws_ecs_service" "service" {
-  cluster         = data.terraform_remote_state.environment.outputs.ecs.primary_cluster_id
-  desired_count   = 1
+  cluster = data.terraform_remote_state.environment.outputs.ecs.primary_cluster_id
+  # Two replicas baseline for HA. The OAuth flow is now stateless
+  # (state lives in DynamoDB — see store_dynamo.go), so /authorize
+  # and /callback can land on different tasks without breaking the
+  # handshake. Autoscaling can grow this up to max_capacity (5)
+  # based on CPU; min_capacity below enforces the HA floor.
+  desired_count   = 2
   launch_type     = "FARGATE"
   name            = var.name
   task_definition = aws_ecs_task_definition.definition.arn
@@ -175,8 +180,12 @@ a proxy until we have a custom metric for in-flight MCP sessions.
 ******************************************/
 
 resource "aws_appautoscaling_target" "ecs" {
+  # min=2 is the actual steady-state floor — `desired_count` on the
+  # service has `ignore_changes` set so the autoscaler owns it
+  # post-creation. Flipping min_capacity from 1 to 2 is what makes
+  # the service genuinely HA.
   max_capacity       = 5
-  min_capacity       = 1
+  min_capacity       = 2
   resource_id        = "service/${var.environment}/${aws_ecs_service.service.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"

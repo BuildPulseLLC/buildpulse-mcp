@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.buildpulsellc/buildpulse-mcp",
+  "name": "io.github.BuildPulseLLC/buildpulse-mcp",
   "description": "BuildPulse CI test analytics for AI agents — flaky tests, coverage, and CI run history.",
   "repository": {
     "url": "https://github.com/BuildPulseLLC/buildpulse-mcp",

@@ -1,7 +1,7 @@
 {
   "name": "@buildpulse/mcp",
   "version": "0.1.0",
-  "mcpName": "io.github.buildpulsellc/buildpulse-mcp",
+  "mcpName": "io.github.BuildPulseLLC/buildpulse-mcp",
   "description": "BuildPulse Model Context Protocol server — flaky test analytics, coverage, and CI run history as agent-callable tools.",
   "keywords": [
     "mcp",

@@ -23,11 +23,19 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /out/buildpulse-mcp-remote \
     ./cmd/mcp-remote
 
+# AWS RDS CA bundle, fetched in the build stage so we can `ADD` it
+# with a chmod and copy a known-good file into the distroless runtime
+# (distroless has no curl). The MONGODB_URI references
+# `tlsCAFile=/app/global-bundle.pem`; without this the DocumentDB
+# connection fails at TLS handshake. Same source as platform-api.
+ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/global-bundle.pem
+
 # Distroless runtime. No shell, no package manager — just our binary
-# plus the root CA bundle. Smaller and safer than alpine.
+# plus the RDS CA bundle. Smaller and safer than alpine.
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/buildpulse-mcp-remote /usr/local/bin/buildpulse-mcp-remote
+COPY --from=build /app/global-bundle.pem /app/global-bundle.pem
 
 EXPOSE 8080
 USER nonroot:nonroot

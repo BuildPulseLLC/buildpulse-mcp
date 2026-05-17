@@ -81,6 +81,11 @@ resource "aws_ecs_task_definition" "definition" {
         { name = "COGNITO_DOMAIN", value = "https://${data.terraform_remote_state.environment.outputs.cognito.user_pool_domain}" },
         { name = "COGNITO_CLIENT_ID", value = data.terraform_remote_state.environment.outputs.cognito.mcp_client_id },
         { name = "MCP_ISSUER", value = "https://${var.domain[var.environment]}" },
+        # DocumentDB — needed so cmd/mcp-remote/mongo.go can resolve
+        # the Cognito user → memberships → org UUIDs on OAuth callback
+        # and persist the resulting mcpSession. Without this, OAuth
+        # tokens are minted but won't authenticate on tool calls.
+        { name = "MONGODB_URI", value = var.mongodb_uri },
       ]
       # The Cognito client secret comes from Secrets Manager so it
       # never lands in the task definition JSON in plaintext. ECS pulls

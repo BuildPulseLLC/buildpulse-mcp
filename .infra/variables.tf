@@ -47,3 +47,10 @@ variable "platform_api_url" {
   description = "Base URL of the platform-api this MCP talks to (no trailing slash)."
   default     = ""
 }
+
+variable "mongodb_uri" {
+  type        = string
+  description = "DocumentDB connection URI. cmd/mcp-remote uses this to resolve Cognito users to BuildPulse orgs and to persist mcpSessions so OAuth tokens authenticate against platform-api on tool calls. Same DocumentDB cluster platform-api uses."
+  sensitive   = true
+  default     = ""
+}

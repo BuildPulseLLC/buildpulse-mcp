@@ -140,14 +140,15 @@ type registeredClient struct {
 }
 
 type authorizationCode struct {
-	Code          string
-	ClientID      string
-	RedirectURI   string
-	CodeChallenge string
-	Scope         string
-	UserSubject   string // Cognito user sub
-	UserEmail     string
-	Expires       time.Time
+	Code            string
+	ClientID        string
+	RedirectURI     string
+	CodeChallenge   string
+	Scope           string
+	UserSubject     string   // Cognito user sub
+	UserEmail       string
+	OrganizationIDs []string // org UUIDs resolved at callback time
+	Expires         time.Time
 }
 
 type issuedToken struct {
@@ -301,16 +302,29 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the Cognito user's BuildPulse org memberships so the
+	// mcpSession persisted at /token can scope subsequent tool calls.
+	// Logged either way so the downstream-tool-call 401 has a
+	// breadcrumb.
+	orgIDs, oerr := resolveUserOrgs(r.Context(), idClaims.Sub, idClaims.Email)
+	if oerr != nil {
+		log.Printf("resolveUserOrgs failed for sub=%s email=%s: %v", idClaims.Sub, idClaims.Email, oerr)
+		orgIDs = nil
+	} else {
+		log.Printf("resolveUserOrgs ok for sub=%s email=%s: %d orgs", idClaims.Sub, idClaims.Email, len(orgIDs))
+	}
+
 	code := randomHex(32)
 	s.codes.Store(code, &authorizationCode{
-		Code:          code,
-		ClientID:      pending.ClientID,
-		RedirectURI:   pending.RedirectURI,
-		CodeChallenge: pending.CodeChallenge,
-		Scope:         pending.Scope,
-		UserSubject:   idClaims.Sub,
-		UserEmail:     idClaims.Email,
-		Expires:       time.Now().Add(authCodeTTL),
+		Code:            code,
+		ClientID:        pending.ClientID,
+		RedirectURI:     pending.RedirectURI,
+		CodeChallenge:   pending.CodeChallenge,
+		Scope:           pending.Scope,
+		UserSubject:     idClaims.Sub,
+		UserEmail:       idClaims.Email,
+		OrganizationIDs: orgIDs,
+		Expires:         time.Now().Add(authCodeTTL),
 	})
 
 	finalRedirect := pending.RedirectURI
@@ -384,6 +398,19 @@ func (s *oauthServer) token(w http.ResponseWriter, r *http.Request) {
 		Scope:       auth.Scope,
 		Expires:     time.Now().Add(accessTokenTTL),
 	})
+
+	// Persist the session in DocumentDB so platform-api's auth
+	// middleware accepts the token on tool calls. Errors are logged
+	// but don't fail the OAuth flow — the downstream 401 (if any) is
+	// the actionable surface; the OAuth client did nothing wrong.
+	if perr := persistMCPSession(
+		r.Context(), accessToken, auth.UserSubject, auth.UserEmail,
+		auth.OrganizationIDs, accessTokenTTL,
+	); perr != nil {
+		log.Printf("persistMCPSession failed for %s (%d orgs): %v", auth.UserEmail, len(auth.OrganizationIDs), perr)
+	} else {
+		log.Printf("persistMCPSession ok for %s (%d orgs)", auth.UserEmail, len(auth.OrganizationIDs))
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")

@@ -71,8 +71,22 @@ resource "aws_ecs_task_definition" "definition" {
       cpu               = 256
       name              = var.name
       environment = [
-        { name = "ENVIRONMENT",      value = var.environment },
+        { name = "ENVIRONMENT", value = var.environment },
         { name = "PLATFORM_API_URL", value = local.platform_api_url },
+        # OAuth — see cmd/mcp-remote/oauth.go. When set, the server's
+        # /oauth/* endpoints become functional and the metadata doc
+        # advertises real endpoints; when absent the metadata surfaces
+        # x-buildpulse-oauth-status=unconfigured and /authorize returns
+        # 501. Bearer-token auth on /mcp works either way.
+        { name = "COGNITO_DOMAIN", value = "https://${data.terraform_remote_state.environment.outputs.cognito.user_pool_domain}" },
+        { name = "COGNITO_CLIENT_ID", value = data.terraform_remote_state.environment.outputs.cognito.mcp_client_id },
+        { name = "MCP_ISSUER", value = "https://${var.domain[var.environment]}" },
+      ]
+      # The Cognito client secret comes from Secrets Manager so it
+      # never lands in the task definition JSON in plaintext. ECS pulls
+      # it at task start and injects it as the named env var.
+      secrets = [
+        { name = "COGNITO_CLIENT_SECRET", valueFrom = data.terraform_remote_state.environment.outputs.mcp.cognito_client_secret_arn },
       ]
       portMappings = [{
         containerPort = 8080

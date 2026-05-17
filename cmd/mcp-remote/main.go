@@ -65,6 +65,13 @@ func main() {
 		platformURL = mcpserver.DefaultPlatformURL
 	}
 
+	// Connect to DocumentDB so the OAuth callback can write mcpSession
+	// records that platform-api's auth middleware accepts on tool
+	// calls. Best-effort: if MONGODB_URI is unset or unreachable the
+	// rest of the server keeps working, but OAuth-minted tokens won't
+	// authenticate against platform-api. See cmd/mcp-remote/mongo.go.
+	initMongo(context.Background())
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, r *http.Request) {

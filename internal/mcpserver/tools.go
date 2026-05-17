@@ -22,9 +22,16 @@ import (
 // Atlassian's deep-linked Jira tool responses.
 func registerTools(s *mcp.Server, c *Client) {
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_my_organizations",
+		Title:       "List my BuildPulse organizations",
+		Description: "Return every BuildPulse organization the current MCP session can access. Multi-tenant users must call this first to discover the `id` (UUID) of the organization they want to scope subsequent tool calls to — pass that `id` as the `organization_id` argument on find_flaky_tests / get_test_history / list_recent_submissions / get_repo_flakiness / get_repo_coverage. Single-tenant callers will see exactly one entry and don't need to pass `organization_id`.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, listMyOrganizations(c))
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "find_flaky_tests",
 		Title:       "Find flaky tests",
-		Description: "Search a repository's flaky / disruptive test inventory. Returns tests that have been intermittently failing in the last 14 days, sorted by disruptiveness (default) or recency. Filter by tags, free-text on test name / file / class, and a since-date. Use this as the entry point for any flaky-test investigation.",
+		Description: "Search a repository's flaky / disruptive test inventory. Returns tests that have been intermittently failing in the last 14 days, sorted by disruptiveness (default) or recency. Filter by tags, free-text on test name / file / class, and a since-date. Use this as the entry point for any flaky-test investigation. For users in multiple organizations, pass `organization_id` (call list_my_organizations first to enumerate).",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: true,
 			Title:        "Find flaky tests",
@@ -60,10 +67,51 @@ func registerTools(s *mcp.Server, c *Client) {
 	}, getRepoCoverage(c))
 }
 
+// addOrgParam appends `organization_id=<uuid>` to the given query
+// values iff the caller supplied one. The platform-api middleware
+// silently ignores an empty value for single-org apiToken sessions
+// but requires it for multi-org mcpSession callers, so it's safe to
+// pass through verbatim.
+func addOrgParam(params url.Values, orgID string) {
+	if orgID = strings.TrimSpace(orgID); orgID != "" {
+		params.Set("organization_id", orgID)
+	}
+}
+
+// --- list_my_organizations --------------------------------------------------
+
+type listOrgsInput struct{}
+
+type orgOut struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug,omitempty"`
+}
+
+type listOrgsOutput struct {
+	Organizations []orgOut `json:"organizations"`
+}
+
+func listMyOrganizations(c *Client) mcp.ToolHandlerFor[listOrgsInput, listOrgsOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, _ listOrgsInput) (*mcp.CallToolResult, listOrgsOutput, error) {
+		var resp struct {
+			Organizations []orgOut `json:"organizations"`
+		}
+		if err := c.GetJSON(ctx, "/api/me/organizations", nil, &resp); err != nil {
+			return nil, listOrgsOutput{}, err
+		}
+		if resp.Organizations == nil {
+			resp.Organizations = []orgOut{}
+		}
+		return nil, listOrgsOutput{Organizations: resp.Organizations}, nil
+	}
+}
+
 // --- find_flaky_tests --------------------------------------------------------
 
 type findFlakyInput struct {
 	Repository         string   `json:"repository" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
+	OrganizationID     string   `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
 	Tags               []string `json:"tags,omitempty" jsonschema:"optional list of tags — matches any (OR)"`
 	Search             string   `json:"search,omitempty" jsonschema:"optional free-text match on test name, suite, file, or classname"`
 	SinceDate          string   `json:"since,omitempty" jsonschema:"only return tests last seen on or after this YYYY-MM-DD"`
@@ -102,6 +150,7 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 		params := url.Values{}
 		params.Set("repository", in.Repository)
 		params.Set("include", "disruptiveness_ratio,nondeterministic_negative_result_count,nondeterminism_first_recorded_at,tags")
+		addOrgParam(params, in.OrganizationID)
 
 		if in.Limit > 0 && in.Limit <= 100 {
 			params.Set("limit", strconv.Itoa(in.Limit))
@@ -178,7 +227,8 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 // --- get_test_history --------------------------------------------------------
 
 type testHistoryInput struct {
-	TestID string `json:"test_id" jsonschema:"the BuildPulse test (disruptor) ID — 24-char hex (from find_flaky_tests output)"`
+	TestID         string `json:"test_id" jsonschema:"the BuildPulse test (disruptor) ID — 24-char hex (from find_flaky_tests output)"`
+	OrganizationID string `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
 }
 
 type disruptionEvent struct {
@@ -210,7 +260,9 @@ func getTestHistory(c *Client) mcp.ToolHandlerFor[testHistoryInput, testHistoryO
 			Results []disruptionEvent `json:"results"`
 		}
 		var r resp
-		if err := c.GetJSON(ctx, "/api/tests/"+url.PathEscape(in.TestID)+"/results", nil, &r); err != nil {
+		params := url.Values{}
+		addOrgParam(params, in.OrganizationID)
+		if err := c.GetJSON(ctx, "/api/tests/"+url.PathEscape(in.TestID)+"/results", params, &r); err != nil {
 			return nil, testHistoryOutput{}, err
 		}
 		return nil, testHistoryOutput{
@@ -225,9 +277,10 @@ func getTestHistory(c *Client) mcp.ToolHandlerFor[testHistoryInput, testHistoryO
 // --- list_recent_submissions -------------------------------------------------
 
 type submissionsInput struct {
-	Owner string `json:"owner" jsonschema:"the repository owner, case-insensitive (e.g. 'acme')"`
-	Name  string `json:"name" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
-	Limit int    `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 10)"`
+	Owner          string `json:"owner" jsonschema:"the repository owner, case-insensitive (e.g. 'acme')"`
+	Name           string `json:"name" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
+	OrganizationID string `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
+	Limit          int    `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 10)"`
 }
 
 type submission struct {
@@ -258,6 +311,7 @@ func listRecentSubmissions(c *Client) mcp.ToolHandlerFor[submissionsInput, submi
 		if in.Limit > 0 && in.Limit <= 100 {
 			params.Set("limit", strconv.Itoa(in.Limit))
 		}
+		addOrgParam(params, in.OrganizationID)
 
 		type resp struct {
 			Count       int64        `json:"count"`
@@ -287,7 +341,8 @@ func listRecentSubmissions(c *Client) mcp.ToolHandlerFor[submissionsInput, submi
 // --- get_repo_flakiness ------------------------------------------------------
 
 type repoMetricInput struct {
-	Repository string `json:"repository" jsonschema:"the repository name (case-insensitive)"`
+	Repository     string `json:"repository" jsonschema:"the repository name (case-insensitive)"`
+	OrganizationID string `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
 }
 
 type flakinessOutput struct {
@@ -306,6 +361,7 @@ func getRepoFlakiness(c *Client) mcp.ToolHandlerFor[repoMetricInput, flakinessOu
 
 		params := url.Values{}
 		params.Set("repository", in.Repository)
+		addOrgParam(params, in.OrganizationID)
 		body, _, err := c.Get(ctx, "/api/v1/flaky/badges", params)
 		if err != nil {
 			return nil, flakinessOutput{}, err
@@ -339,6 +395,7 @@ func getRepoCoverage(c *Client) mcp.ToolHandlerFor[repoMetricInput, coverageOutp
 
 		params := url.Values{}
 		params.Set("repository", in.Repository)
+		addOrgParam(params, in.OrganizationID)
 		body, _, err := c.Get(ctx, "/api/v1/coverage/badges", params)
 		if err != nil {
 			return nil, coverageOutput{}, err

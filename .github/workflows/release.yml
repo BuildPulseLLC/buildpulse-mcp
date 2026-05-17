@@ -127,7 +127,7 @@ jobs:
           version="${GITHUB_REF_NAME#mcp-v}"
           npm version "$version" --no-git-tag-version --allow-same-version
 
-      - name: Publish
+      - name: Publish (with provenance)
         if: steps.token.outputs.skip == 'false'
         working-directory: npm
         env:
@@ -136,11 +136,50 @@ jobs:
           # the just-published GitHub release. Skip during publish — npm
           # only needs the source files in the tarball, not the binary.
           BUILDPULSE_MCP_SKIP_INSTALL: "1"
-        # --provenance would attach a Sigstore attestation linking this
-        # tarball to its GitHub Actions source, but npm requires the
-        # source repository to be PUBLIC for provenance to verify (a
-        # platform constraint, not something we can opt out of). The
-        # BuildPulseLLC/platform-api repo is private, so we publish
-        # without provenance. If the repo is ever made public, add
-        # `--provenance` back.
-        run: npm publish --access public
+        # --provenance attaches a Sigstore attestation linking this
+        # tarball to its GitHub Actions source workflow. npm only
+        # accepts provenance from PUBLIC source repos — this one is
+        # public, so it works.
+        run: npm publish --provenance --access public
+
+  publish-mcp-registry:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # github-oidc auth into the MCP Registry
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -sL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz"
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+          ./mcp-publisher --help >/dev/null
+
+      - name: Sync server.json version to release tag
+        run: |
+          version="${GITHUB_REF_NAME#mcp-v}"
+          python3 - "$version" <<'PY'
+          import json, sys
+          version = sys.argv[1]
+          with open("server.json") as f:
+              d = json.load(f)
+          d["version"] = version
+          for pkg in d.get("packages", []):
+              pkg["version"] = version
+          with open("server.json", "w") as f:
+              json.dump(d, f, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Login (GitHub Actions OIDC)
+        # No personal account involved — the workflow's OIDC token
+        # authenticates as `BuildPulseLLC/buildpulse-mcp` itself, which
+        # is sufficient to publish under `io.github.buildpulsellc/*`.
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish

@@ -91,6 +91,21 @@ func main() {
 	// NewStreamableHTTPHandler asks us for a *Server per inbound
 	// request — we use that hook to bind the request's Authorization
 	// token to the server's outbound calls.
+	//
+	// Stateless: true skips Mcp-Session-Id validation and treats every
+	// POST as a fresh, self-contained request. This is the right mode
+	// for BuildPulse because:
+	//   1. Every tool is read-only against platform-api; we never need
+	//      server->client requests (the only thing Stateless mode
+	//      rejects — see the StreamableHTTPOptions godoc).
+	//   2. Without per-session in-process state, the ALB can freely
+	//      round-robin requests across ECS tasks. This is what lets
+	//      mcp-remote run min/max_capacity=2 (or more) safely; cookie
+	//      stickiness still works for browser clients but is no longer
+	//      load-bearing for SDK clients that don't keep a cookie jar.
+	// OAuth-flow state (clients, codes, pending) is separately persisted
+	// to DynamoDB via store_dynamo.go, so the OAuth surface area is also
+	// task-independent.
 	streamable := mcp.NewStreamableHTTPHandler(
 		func(r *http.Request) *mcp.Server {
 			token, err := extractToken(r.Header.Get("Authorization"))
@@ -105,7 +120,7 @@ func main() {
 			client := mcpserver.NewClient(platformURL, token)
 			return mcpserver.New(client)
 		},
-		nil,
+		&mcp.StreamableHTTPOptions{Stateless: true},
 	)
 	mux.Handle("/mcp", streamable)
 	mux.Handle("/mcp/", streamable)

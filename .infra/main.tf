@@ -157,12 +157,11 @@ ECS - Service
 
 resource "aws_ecs_service" "service" {
   cluster = data.terraform_remote_state.environment.outputs.ecs.primary_cluster_id
-  # Single replica only — see min_capacity below for the full reason.
-  # Short version: the Go MCP SDK's Streamable HTTP transport keeps
-  # per-session state in-process with no shared-store hook, so a
-  # client's /mcp follow-up calls 404 if they land on a different
-  # task than the one that owned the initialize call.
-  desired_count   = 1
+  # Initial desired count; ECS auto-scaling (see
+  # aws_appautoscaling_target.ecs below) takes over after the first
+  # apply. lifecycle.ignore_changes keeps Terraform from clobbering
+  # the autoscaler.
+  desired_count   = 2
   launch_type     = "FARGATE"
   name            = var.name
   task_definition = aws_ecs_task_definition.definition.arn
@@ -199,30 +198,20 @@ a proxy until we have a custom metric for in-flight MCP sessions.
 ******************************************/
 
 resource "aws_appautoscaling_target" "ecs" {
-  # SINGLE-REPLICA CONSTRAINT — do not bump min_capacity above 1
-  # until the Go MCP SDK exposes a shared-store hook for Streamable
-  # HTTP session state.
+  # Multi-replica enabled via the SDK's Stateless mode (see
+  # cmd/mcp-remote/main.go). Every POST is self-contained — no
+  # Mcp-Session-Id validation, no per-session in-process state — so
+  # the ALB can freely round-robin across tasks without the previous
+  # 404-on-follow-up failure mode. The OAuth-flow state (clients,
+  # codes, pending) was already external via store_dynamo.go.
   #
-  # The OAuth-flow state (clients, codes, pending) is in DynamoDB
-  # via store_dynamo.go, so OAuth survives task replacement. But
-  # the MCP SDK's *transport-level* session map (keyed by
-  # Mcp-Session-Id, used to multiplex JSON-RPC calls over the
-  # Streamable HTTP transport) is in-process inside each ECS task.
-  # With multiple tasks, the ALB round-robins each POST and the
-  # /mcp follow-up call gets 404'd by whichever task didn't own the
-  # initialize. ALB lb_cookie stickiness doesn't help — the MCP
-  # Go-SDK client doesn't have a cookie jar.
-  #
-  # Single replica is acceptable today:
-  #   - Rolling deploys: in-flight MCP sessions get dropped, but
-  #     clients reconnect transparently (they already cache the
-  #     OAuth refresh token and the SDK retries).
-  #   - Task crashes: ~30s service interruption while ECS reschedules.
-  #
-  # When the SDK adds session-store extensibility (upstream issue
-  # to file), flip these back to 2/5 and re-enable stickiness.
-  max_capacity       = 1
-  min_capacity       = 1
+  # Verified 2026-05-17 with min/max=2: 20/20 MCP RPCs (10 tools/list,
+  # 10 tools/call list_my_organizations) succeeded across both
+  # replicas with no sticky cookies. Stickiness on the target group
+  # is still configured for browser-based clients that route through
+  # the same ALB.
+  max_capacity       = 5
+  min_capacity       = 2
   resource_id        = "service/${var.environment}/${aws_ecs_service.service.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"

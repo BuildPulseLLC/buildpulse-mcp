@@ -22,17 +22,14 @@ resource "aws_lb_target_group" "group" {
     timeout  = 10
   }
 
-  # MCP Streamable HTTP sessions are keyed by Mcp-Session-Id and the
-  # transport-level session state lives in each task's memory (the
-  # Go MCP SDK doesn't expose a shared-store hook). With
-  # desired_count >= 2, a client's initialize and follow-up calls
-  # would round-robin across tasks and the follow-up would 404
-  # because the new task doesn't know the session-id.
-  #
-  # ALB-generated LB cookie keeps the same client returning to the
-  # same task for the duration of an MCP session. 1h matches the
-  # OAuth access-token TTL — by the time the cookie expires the
-  # client has to re-authenticate anyway and a new session is fine.
+  # Stickiness is a no-op while the autoscaling target is pinned to
+  # min/max = 1 (only one target to stick to). Kept enabled+
+  # configured anyway so that if/when the single-replica
+  # constraint is lifted (see the long note on
+  # aws_appautoscaling_target.ecs), the sticky behavior is already
+  # in place. It still won't help the MCP Go-SDK client (no cookie
+  # jar), but it WILL help browser-based clients that come through
+  # the same ALB.
   stickiness {
     type            = "lb_cookie"
     cookie_duration = 3600
@@ -155,12 +152,12 @@ ECS - Service
 
 resource "aws_ecs_service" "service" {
   cluster = data.terraform_remote_state.environment.outputs.ecs.primary_cluster_id
-  # Two replicas baseline for HA. The OAuth flow is now stateless
-  # (state lives in DynamoDB — see store_dynamo.go), so /authorize
-  # and /callback can land on different tasks without breaking the
-  # handshake. Autoscaling can grow this up to max_capacity (5)
-  # based on CPU; min_capacity below enforces the HA floor.
-  desired_count   = 2
+  # Single replica only — see min_capacity below for the full reason.
+  # Short version: the Go MCP SDK's Streamable HTTP transport keeps
+  # per-session state in-process with no shared-store hook, so a
+  # client's /mcp follow-up calls 404 if they land on a different
+  # task than the one that owned the initialize call.
+  desired_count   = 1
   launch_type     = "FARGATE"
   name            = var.name
   task_definition = aws_ecs_task_definition.definition.arn
@@ -197,12 +194,30 @@ a proxy until we have a custom metric for in-flight MCP sessions.
 ******************************************/
 
 resource "aws_appautoscaling_target" "ecs" {
-  # min=2 is the actual steady-state floor — `desired_count` on the
-  # service has `ignore_changes` set so the autoscaler owns it
-  # post-creation. Flipping min_capacity from 1 to 2 is what makes
-  # the service genuinely HA.
-  max_capacity       = 5
-  min_capacity       = 2
+  # SINGLE-REPLICA CONSTRAINT — do not bump min_capacity above 1
+  # until the Go MCP SDK exposes a shared-store hook for Streamable
+  # HTTP session state.
+  #
+  # The OAuth-flow state (clients, codes, pending) is in DynamoDB
+  # via store_dynamo.go, so OAuth survives task replacement. But
+  # the MCP SDK's *transport-level* session map (keyed by
+  # Mcp-Session-Id, used to multiplex JSON-RPC calls over the
+  # Streamable HTTP transport) is in-process inside each ECS task.
+  # With multiple tasks, the ALB round-robins each POST and the
+  # /mcp follow-up call gets 404'd by whichever task didn't own the
+  # initialize. ALB lb_cookie stickiness doesn't help — the MCP
+  # Go-SDK client doesn't have a cookie jar.
+  #
+  # Single replica is acceptable today:
+  #   - Rolling deploys: in-flight MCP sessions get dropped, but
+  #     clients reconnect transparently (they already cache the
+  #     OAuth refresh token and the SDK retries).
+  #   - Task crashes: ~30s service interruption while ECS reschedules.
+  #
+  # When the SDK adds session-store extensibility (upstream issue
+  # to file), flip these back to 2/5 and re-enable stickiness.
+  max_capacity       = 1
+  min_capacity       = 1
   resource_id        = "service/${var.environment}/${aws_ecs_service.service.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"

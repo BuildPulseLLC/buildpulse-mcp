@@ -21,6 +21,23 @@ resource "aws_lb_target_group" "group" {
     path     = "/health"
     timeout  = 10
   }
+
+  # MCP Streamable HTTP sessions are keyed by Mcp-Session-Id and the
+  # transport-level session state lives in each task's memory (the
+  # Go MCP SDK doesn't expose a shared-store hook). With
+  # desired_count >= 2, a client's initialize and follow-up calls
+  # would round-robin across tasks and the follow-up would 404
+  # because the new task doesn't know the session-id.
+  #
+  # ALB-generated LB cookie keeps the same client returning to the
+  # same task for the duration of an MCP session. 1h matches the
+  # OAuth access-token TTL — by the time the cookie expires the
+  # client has to re-authenticate anyway and a new session is fine.
+  stickiness {
+    type            = "lb_cookie"
+    cookie_duration = 3600
+    enabled         = true
+  }
 }
 
 resource "aws_lb_listener_rule" "listener_rule" {

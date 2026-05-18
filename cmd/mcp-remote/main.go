@@ -43,8 +43,10 @@ const (
 	defaultPort      = "8080"
 	streamableHTTP   = "/mcp"
 	healthPath       = "/health"
-	wellKnownOAuth   = "/.well-known/oauth-authorization-server"
-	wellKnownMCP     = "/.well-known/mcp"
+	wellKnownOAuth            = "/.well-known/oauth-authorization-server"
+	wellKnownMCP              = "/.well-known/mcp"
+	wellKnownProtectedResrc   = "/.well-known/oauth-protected-resource"
+	wellKnownProtectedRsrcMCP = "/.well-known/oauth-protected-resource/mcp"
 )
 
 // tokenRegexp validates the 40-char hex token shape before we ever
@@ -148,6 +150,21 @@ func main() {
 	mux.HandleFunc("GET /oauth/authorize", oauth.authorize)
 	mux.HandleFunc("GET /oauth/callback", oauth.callback)
 	mux.HandleFunc("POST /oauth/token", oauth.token)
+
+	// RFC 9728 OAuth 2.0 Protected Resource Metadata. Newer MCP
+	// clients (Claude Code, Cursor) probe this endpoint to learn
+	// which authorization server protects the `/mcp` resource.
+	// We point them at our own RFC 8414 metadata document.
+	protectedResource := func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"resource":              "https://mcp.buildpulse.io/mcp",
+			"authorization_servers": []string{"https://mcp.buildpulse.io"},
+			"bearer_methods_supported": []string{"header"},
+			"resource_documentation":   "https://platform.buildpulse.io/docs/mcp",
+		})
+	}
+	mux.HandleFunc("GET "+wellKnownProtectedResrc, protectedResource)
+	mux.HandleFunc("GET "+wellKnownProtectedRsrcMCP, protectedResource)
 
 	handler := withRequestID(withLogging(withCORS(mux)))
 

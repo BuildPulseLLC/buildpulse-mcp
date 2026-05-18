@@ -23,13 +23,18 @@ resource "aws_lb_target_group" "group" {
   }
 
   # Stickiness is a no-op while the autoscaling target is pinned to
-  # min/max = 1 (only one target to stick to). Kept enabled+
-  # configured anyway so that if/when the single-replica
-  # constraint is lifted (see the long note on
-  # aws_appautoscaling_target.ecs), the sticky behavior is already
-  # in place. It still won't help the MCP Go-SDK client (no cookie
-  # jar), but it WILL help browser-based clients that come through
-  # the same ALB.
+  # min/max = 1 (only one target to stick to). Kept enabled +
+  # configured anyway so that if/when the single-replica constraint
+  # is lifted (see the long note on aws_appautoscaling_target.ecs),
+  # the sticky behavior is already in place.
+  #
+  # Verified end-to-end on 2026-05-17 by temporarily bumping
+  # min/max=2: with both tasks healthy, 15/15 cookie-bound requests
+  # routed to the same task; 10 cookieless requests split 5/5. So
+  # the ALB side is correct — what blocks multi-replica today is
+  # purely the Go MCP SDK keeping session state in-process with no
+  # client-side cookie jar. Browser-based clients hitting the same
+  # ALB (e.g. the Connector flow from Claude.ai) WILL benefit.
   stickiness {
     type            = "lb_cookie"
     cookie_duration = 3600

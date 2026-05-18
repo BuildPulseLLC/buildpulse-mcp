@@ -29,6 +29,13 @@ func registerTools(s *mcp.Server, c *Client) {
 	}, listMyOrganizations(c))
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_repositories",
+		Title:       "List repositories in a BuildPulse organization",
+		Description: "Return every repository BuildPulse is monitoring for the given organization, sorted alphabetically. Call this whenever the user asks a repo-scoped question (\"do I have flaky tests?\", \"why is CI red?\") without naming a specific repo — the `name` field is what you pass to find_flaky_tests / list_recent_submissions / get_repo_flakiness / get_repo_coverage as their `repository` argument. For multi-tenant users, pass `organization_id` (call list_my_organizations first to enumerate); single-tenant tokens see exactly the bound org's repos.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, listRepositories(c))
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "find_flaky_tests",
 		Title:       "Find flaky tests",
 		Description: "Search a repository's flaky / disruptive test inventory. Returns tests that have been intermittently failing in the last 14 days, sorted by disruptiveness (default) or recency. Filter by tags, free-text on test name / file / class, and a since-date. Use this as the entry point for any flaky-test investigation. For users in multiple organizations, pass `organization_id` (call list_my_organizations first to enumerate).",
@@ -104,6 +111,58 @@ func listMyOrganizations(c *Client) mcp.ToolHandlerFor[listOrgsInput, listOrgsOu
 			resp.Organizations = []orgOut{}
 		}
 		return nil, listOrgsOutput{Organizations: resp.Organizations}, nil
+	}
+}
+
+// --- list_repositories ------------------------------------------------------
+
+type listReposInput struct {
+	OrganizationID string `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
+}
+
+type repoOut struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	FullName    string `json:"full_name"`
+	URL         string `json:"url"`
+	Description string `json:"description,omitempty"`
+	WebURL      string `json:"web_url"`
+}
+
+type listReposOutput struct {
+	Repositories []repoOut `json:"repositories"`
+}
+
+func listRepositories(c *Client) mcp.ToolHandlerFor[listReposInput, listReposOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in listReposInput) (*mcp.CallToolResult, listReposOutput, error) {
+		params := url.Values{}
+		addOrgParam(params, in.OrganizationID)
+
+		var resp struct {
+			Repositories []struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				FullName    string `json:"full_name"`
+				URL         string `json:"url"`
+				Description string `json:"description,omitempty"`
+			} `json:"repositories"`
+		}
+		if err := c.GetJSON(ctx, "/api/me/repositories", params, &resp); err != nil {
+			return nil, listReposOutput{}, err
+		}
+
+		out := listReposOutput{Repositories: make([]repoOut, 0, len(resp.Repositories))}
+		for _, r := range resp.Repositories {
+			out.Repositories = append(out.Repositories, repoOut{
+				ID:          r.ID,
+				Name:        r.Name,
+				FullName:    r.FullName,
+				URL:         r.URL,
+				Description: r.Description,
+				WebURL:      c.WebURL("/repos/" + url.PathEscape(r.Name)),
+			})
+		}
+		return nil, out, nil
 	}
 }
 

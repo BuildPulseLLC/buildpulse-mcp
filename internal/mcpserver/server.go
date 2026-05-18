@@ -25,9 +25,11 @@ func New(client *Client) *mcp.Server {
 			"investigate flaky tests, inspect CI run history, and surface " +
 			"flakiness or coverage health for a repository.\n\n" +
 			"Common workflows:\n" +
+			"- If the user asks a repo-scoped question without naming a repo, call list_repositories first (passing organization_id for multi-tenant users) and use the returned `name` values as the `repository` argument on later tools — do NOT ask the user to type a repo name.\n" +
 			"- \"Why is my CI red?\"  → list_recent_submissions, then get_test_history on any failing test.\n" +
 			"- \"Triage flaky tests.\"  → find_flaky_tests (sort=recency), then for each interesting test, get_test_history.\n" +
 			"- \"Repo health snapshot.\"  → get_repo_flakiness and get_repo_coverage.\n\n" +
+			"For multi-tenant users (list_my_organizations returns 2+ orgs), pass organization_id on every subsequent call.\n\n" +
 			"Every tool output that names a test or repository includes a " +
 			"`web_url` field — surface it back to the user as a clickable link.",
 	})

@@ -76,9 +76,15 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// hostname is captured at startup so /health and other endpoints can
+	// echo back which ECS task served the request — used to verify ALB
+	// target-group stickiness from the outside. On Fargate this is
+	// `ip-10-0-x-y` derived from the task ENI.
+	hostname, _ := os.Hostname()
 	mux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		w.Header().Set("X-Instance-Id", hostname)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "instance": hostname})
 	})
 
 	// The Streamable HTTP MCP transport. The Go SDK's

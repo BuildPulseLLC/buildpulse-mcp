@@ -5,11 +5,21 @@
 // ChatGPT Connectors, etc.
 //
 // Authentication is per-session: the Streamable HTTP client supplies
-// an Authorization header (`Bearer <40-hex>` or `token <40-hex>`) on
-// every MCP request. The server validates the format locally, then
-// builds a request-scoped MCP server bound to that token. Tokens are
-// the same 40-hex tokens used by the platform-api itself, so customer
+// an Authorization header (`Bearer <token>` or `token <token>`) on
+// every MCP request, and the server builds a request-scoped MCP
+// server bound to that token. The token is the same BuildPulse API
+// token that authenticates against platform-api, so customer
 // integrations work without provisioning a second credential.
+//
+// Two API token shapes are accepted (both validated server-side by
+// platform-api, so we don't second-guess here):
+//   - `bp_<64-hex>` — current format minted by web-client.
+//   - `<40-hex>`    — legacy Rails-era format; still works.
+//
+// OAuth-minted mcpSession tokens (issued by /oauth/token) are a third,
+// orthogonal credential — they happen to also be 40-hex, but that's an
+// implementation detail of the OAuth flow, not a constraint on the
+// caller's chosen API token.
 //
 // OAuth-based auth (required for Anthropic's Connectors program) is
 // scaffolded but not yet enabled — see /oauth/* routes.
@@ -30,7 +40,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -48,10 +57,6 @@ const (
 	wellKnownProtectedResrc   = "/.well-known/oauth-protected-resource"
 	wellKnownProtectedRsrcMCP = "/.well-known/oauth-protected-resource/mcp"
 )
-
-// tokenRegexp validates the 40-char hex token shape before we ever
-// touch the platform API. Mirrors the regex on the platform-api side.
-var tokenRegexp = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func main() {
 	port := os.Getenv("PORT")
@@ -142,7 +147,7 @@ func main() {
 				"bearer": map[string]any{
 					"header":      "Authorization",
 					"scheme":      "Bearer",
-					"description": "40-character BuildPulse API token (created at https://app.buildpulse.io)",
+					"description": "BuildPulse API token (created at https://app.buildpulse.io). Accepted shapes: `bp_<64-hex>` (current) or `<40-hex>` (legacy).",
 				},
 			},
 			"documentation": "https://platform.buildpulse.io/docs/mcp",
@@ -213,11 +218,13 @@ func main() {
 	_ = srv.Shutdown(ctx)
 }
 
-// extractToken parses a `Bearer <hex>` or legacy `token <hex>` header
-// into its 40-char hex token. Returns an error for missing / malformed
-// inputs. The hex validation here is the same shape we enforce on the
-// platform-api side (see internal/middleware/auth.go) — no point
-// taking a round trip just to discover a malformed token.
+// extractToken parses a `Bearer <token>` or legacy `token <token>`
+// header into its credential. Returns an error only for missing scheme
+// or empty credential — token-shape validation is delegated to
+// platform-api, which knows about all supported formats (current
+// `bp_<64-hex>`, legacy `<40-hex>`, and OAuth-minted mcpSession
+// tokens). Doing format validation here would couple the MCP edge to
+// whichever shapes happen to be valid this week.
 func extractToken(header string) (string, error) {
 	header = strings.TrimSpace(header)
 	if header == "" {
@@ -232,8 +239,8 @@ func extractToken(header string) (string, error) {
 		return "", fmt.Errorf("unsupported Authorization scheme %q (use Bearer or token)", parts[0])
 	}
 	token := strings.TrimSpace(parts[1])
-	if !tokenRegexp.MatchString(token) {
-		return "", fmt.Errorf("token is not a 40-char lowercase hex string")
+	if token == "" {
+		return "", fmt.Errorf("empty Authorization credential")
 	}
 	return token, nil
 }

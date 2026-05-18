@@ -19,7 +19,7 @@
       "environmentVariables": [
         {
           "name": "BUILDPULSE_TOKEN",
-          "description": "40-character BuildPulse API token. Get one at app.buildpulse.io → Organization Settings → API Tokens.",
+          "description": "BuildPulse API token (either `bp_<64-hex>` or legacy 40-hex shape). Get one at app.buildpulse.io → Organization Settings → API Tokens.",
           "isRequired": true,
           "isSecret": true
         },
@@ -39,7 +39,7 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <40-char BuildPulse API token>. Or use OAuth — see /.well-known/oauth-authorization-server for the discovery doc.",
+          "description": "Bearer <BuildPulse API token> — accepts either `bp_<64-hex>` or legacy `<40-hex>`. Or use OAuth — see /.well-known/oauth-authorization-server for the discovery doc.",
           "isRequired": true,
           "isSecret": true
         }

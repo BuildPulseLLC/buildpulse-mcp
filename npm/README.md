@@ -38,7 +38,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
       "command": "npx",
       "args": ["-y", "@buildpulse/mcp"],
       "env": {
-        "BUILDPULSE_TOKEN": "your-40-char-hex-token"
+        "BUILDPULSE_TOKEN": "your-buildpulse-api-token"
       }
     }
   }
@@ -57,7 +57,7 @@ all projects):
       "command": "npx",
       "args": ["-y", "@buildpulse/mcp"],
       "env": {
-        "BUILDPULSE_TOKEN": "your-40-char-hex-token"
+        "BUILDPULSE_TOKEN": "your-buildpulse-api-token"
       }
     }
   }

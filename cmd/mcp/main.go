@@ -11,7 +11,9 @@
 //
 // Configuration:
 //
-//	BUILDPULSE_TOKEN   Required. 40-hex BuildPulse API token.
+//	BUILDPULSE_TOKEN   Required. BuildPulse API token from
+//	                   app.buildpulse.io. Either shape works:
+//	                   `bp_<64-hex>` (current) or `<40-hex>` (legacy).
 //	PLATFORM_API_URL   Optional. Default https://platform.buildpulse.io.
 package main
 

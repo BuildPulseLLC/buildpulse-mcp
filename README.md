@@ -40,7 +40,7 @@ Settings → API Tokens.
     "buildpulse": {
       "command": "npx",
       "args": ["-y", "@buildpulse/mcp"],
-      "env": { "BUILDPULSE_TOKEN": "your-40-char-hex-token" }
+      "env": { "BUILDPULSE_TOKEN": "your-buildpulse-api-token" }
     }
   }
 }

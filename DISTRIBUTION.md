@@ -144,7 +144,7 @@ platform.buildpulse.io  (cmd/api)
 The remote binary `cmd/mcp-remote`:
 
 - Speaks the [Streamable HTTP MCP transport](https://modelcontextprotocol.io/specification/draft/basic/transports#streamable-http)
-- Accepts per-session Bearer-token auth today (`Authorization: Bearer <40-hex>` or the legacy `token <40-hex>` scheme)
+- Accepts per-session Bearer-token auth today (`Authorization: Bearer <token>` or the legacy `token <token>` scheme); the token can be either the current `bp_<64-hex>` API token shape or the legacy 40-hex shape
 - Advertises `/.well-known/mcp` for client discovery
 - Has `/.well-known/oauth-authorization-server` scaffolded but stubbed (returns 501 + a hint pointing at Bearer auth) until OAuth lands
 - Forwards the caller's token to `platform-api` on every tool call — no new credential to provision
@@ -176,8 +176,10 @@ Two options, both worth supporting:
 
 2. **Direct token** — for power users / CI, accept a Bearer token in
    the `Authorization` header on the Streamable HTTP transport. The
-   token is the same 40-hex API token used by `platform-api`. No new
-   secret to manage; useful for self-hosted MCP clients.
+   token is the same BuildPulse API token used by `platform-api`
+   (either the current `bp_<64-hex>` shape or the legacy 40-hex
+   shape). No new secret to manage; useful for self-hosted MCP
+   clients.
 
 ### Submission to the Anthropic Connectors program
 

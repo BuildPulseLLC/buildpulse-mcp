@@ -44,9 +44,14 @@ configSchema:
       type: string
       title: BuildPulse API token
       description: >
-        40-character hexadecimal API token. Generate one at
-        app.buildpulse.io → Organization Settings → API Tokens.
-      pattern: "^[0-9a-f]{40}$"
+        BuildPulse API token. Generate one at app.buildpulse.io →
+        Organization Settings → API Tokens. Either shape is accepted:
+        the current `bp_<64-hex>` format or the legacy 40-character
+        hexadecimal format.
+      # Accept both the current `bp_` prefixed token and the legacy 40-hex
+      # token. Anything else lets platform-api 401 with a clearer message
+      # than a Smithery-side pattern rejection.
+      pattern: "^(bp_[0-9a-f]{64}|[0-9a-f]{40})$"
     PLATFORM_API_URL:
       type: string
       title: Platform API URL

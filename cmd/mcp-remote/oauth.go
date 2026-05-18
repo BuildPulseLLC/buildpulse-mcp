@@ -20,10 +20,13 @@ package main
 //     their BuildPulse organization, and mint our own short-lived
 //     access token that the MCP server accepts as a Bearer.
 //
-//   - Bearer tokens issued here are 40-char hex strings (same shape as
-//     platform-api API tokens) so they slot into the existing platform-api
-//     auth layer without changes. See `Production TODOs` below for
-//     how to persist these.
+//   - Bearer tokens issued here are 40-char hex strings, persisted to
+//     DocumentDB's `mcpSessions` collection. platform-api's auth
+//     middleware looks them up there on every tool call. (This is a
+//     separate credential type from user-supplied BuildPulse API
+//     tokens, which can be either `bp_<64-hex>` or legacy `<40-hex>`
+//     and live in the `apiTokens` collection.) See `Production TODOs`
+//     below for how to persist these.
 //
 // Production TODOs (intentionally not blocking the scaffold):
 //
@@ -416,7 +419,7 @@ func (s *oauthServer) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken := randomHex(20) // 40-hex chars — same shape as platform-api tokens
+	accessToken := randomHex(20) // 40-hex chars; persisted to mcpSessions (separate from apiTokens)
 
 	// Persist the session in DocumentDB so platform-api's auth
 	// middleware accepts the token on tool calls. Errors are logged
@@ -464,7 +467,7 @@ func (s *oauthServer) metadata(w http.ResponseWriter, r *http.Request) {
 		// Surface the misconfiguration in-band so Anthropic Connectors
 		// won't list a half-working server.
 		doc["x-buildpulse-oauth-status"] = "unconfigured"
-		doc["x-buildpulse-oauth-fallback"] = "Use `Authorization: Bearer <40-hex BuildPulse API token>` directly until COGNITO_DOMAIN and COGNITO_CLIENT_ID are set."
+		doc["x-buildpulse-oauth-fallback"] = "Use `Authorization: Bearer <BuildPulse API token>` directly (either `bp_<64-hex>` or legacy `<40-hex>` shape) until COGNITO_DOMAIN and COGNITO_CLIENT_ID are set."
 	}
 
 	w.Header().Set("Content-Type", "application/json")

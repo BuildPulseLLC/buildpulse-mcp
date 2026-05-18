@@ -98,9 +98,11 @@ func (c *Client) Get(ctx context.Context, path string, params url.Values) ([]byt
 	if err != nil {
 		return nil, "", err
 	}
-	// Use the legacy `token <hex>` form — both forms work, but `token`
-	// is what existing customer scripts use, so platform-api access
-	// logs stay consistent.
+	// Use the legacy `token <…>` scheme — both `token` and `Bearer`
+	// work, but `token` is what existing customer scripts use, so
+	// platform-api access logs stay consistent. The token itself can
+	// be either current (`bp_<64-hex>`) or legacy (`<40-hex>`) shape;
+	// platform-api accepts both.
 	req.Header.Set("Authorization", "token "+c.token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", userAgent())

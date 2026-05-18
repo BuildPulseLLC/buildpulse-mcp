@@ -138,9 +138,36 @@ func newOAuthServer(store Store) *oauthServer {
 type registeredClient struct {
 	ClientID     string    `json:"client_id"`
 	ClientName   string    `json:"client_name,omitempty"`
-	RedirectURIs []string  `json:"redirect_uris"`
-	GrantTypes   []string  `json:"grant_types"`
-	CreatedAt    time.Time `json:"client_id_issued_at"`
+	RedirectURIs []string `json:"redirect_uris"`
+	GrantTypes   []string `json:"grant_types"`
+	// CreatedAt is serialized as Unix epoch seconds (an integer) per
+	// RFC 7591 §3.2.1 — NOT as Go's default RFC 3339 string. The
+	// MCP SDK / Claude Code's OAuth client validates this field
+	// against a number-schema and rejects the registration response
+	// when it's a string. See MarshalJSON below.
+	CreatedAt time.Time `json:"-"`
+}
+
+// MarshalJSON renders registeredClient with `client_id_issued_at`
+// as the RFC 7591-compliant Unix-seconds integer. Otherwise we'd
+// inherit Go's time.Time → RFC 3339 string default and break OAuth
+// clients that validate against the spec.
+func (c *registeredClient) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ClientID            string   `json:"client_id"`
+		ClientName          string   `json:"client_name,omitempty"`
+		RedirectURIs        []string `json:"redirect_uris"`
+		GrantTypes          []string `json:"grant_types"`
+		ClientIDIssuedAt    int64    `json:"client_id_issued_at"`
+		TokenEndpointAuth   string   `json:"token_endpoint_auth_method"`
+	}{
+		ClientID:          c.ClientID,
+		ClientName:        c.ClientName,
+		RedirectURIs:      c.RedirectURIs,
+		GrantTypes:        c.GrantTypes,
+		ClientIDIssuedAt:  c.CreatedAt.Unix(),
+		TokenEndpointAuth: "none", // PKCE-only, public clients
+	})
 }
 
 type authorizationCode struct {

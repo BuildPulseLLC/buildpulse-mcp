@@ -190,6 +190,7 @@ type flakyTestOut struct {
 	DisruptionCount     *int     `json:"disruption_count,omitempty"`
 	FirstDisruptionAt   *string  `json:"first_disruption_at,omitempty"`
 	Tags                []string `json:"tags,omitempty"`
+	TimeConsumed        *int64   `json:"time_consumed,omitempty" jsonschema:"total time spent on this test across recent runs, in microseconds — useful as a silent indicator of retries/slow specs"`
 	WebURL              string   `json:"web_url"`
 }
 
@@ -208,7 +209,7 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 
 		params := url.Values{}
 		params.Set("repository", in.Repository)
-		params.Set("include", "disruptiveness_ratio,nondeterministic_negative_result_count,nondeterminism_first_recorded_at,tags")
+		params.Set("include", "disruptiveness_ratio,nondeterministic_negative_result_count,nondeterminism_first_recorded_at,tags,time_consumed")
 		addOrgParam(params, in.OrganizationID)
 
 		if in.Limit > 0 && in.Limit <= 100 {
@@ -251,6 +252,7 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 				DisruptionCount     *int     `json:"disruption_count,omitempty"`
 				FirstDisruptionAt   *string  `json:"first_disruption_at,omitempty"`
 				Tags                []string `json:"tags,omitempty"`
+				TimeConsumed        *int64   `json:"time_consumed,omitempty"`
 			} `json:"tests"`
 		}
 		var resp platformFlakyResp
@@ -276,6 +278,7 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 				DisruptionCount:     t.DisruptionCount,
 				FirstDisruptionAt:   t.FirstDisruptionAt,
 				Tags:                t.Tags,
+				TimeConsumed:        t.TimeConsumed,
 				WebURL:              c.WebURL("/tests/" + url.PathEscape(t.ID)),
 			})
 		}

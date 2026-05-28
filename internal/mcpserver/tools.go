@@ -55,9 +55,16 @@ func registerTools(s *mcp.Server, c *Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_recent_submissions",
 		Title:       "List recent CI runs",
-		Description: "List the most-recent test submissions (CI runs) for a repository. Each entry corresponds to one CI run that uploaded test results to BuildPulse. Reach for this first when a user asks \"why is CI red?\" or \"what changed in the last hour\".",
+		Description: "List the most-recent test submissions (CI runs) for a repository. Each entry corresponds to one CI run that uploaded test results to BuildPulse. Reach for this first when a user asks \"why is CI red?\" or \"what changed in the last hour\". Each entry includes an `id` you can pass to get_submission_test_results to drill into the individual test results for that run.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, listRecentSubmissions(c))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_submission_test_results",
+		Title:       "Get per-test results for a submission",
+		Description: "Return the individual test results recorded against one submission (one CI run). Use `status=\"failed\"` to filter to just the failures and errors — the typical \"red build\" set. Each result carries the test name / suite / file / class, the per-attempt duration in microseconds, the failure message, and the runner-recorded run count (1=first attempt, 2+=retries). Get a submission `id` from list_recent_submissions first.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, getSubmissionTestResults(c))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_flakiness",
@@ -346,7 +353,8 @@ type submissionsInput struct {
 }
 
 type submission struct {
-	Key             string `json:"key"`
+	ID              string `json:"id" jsonschema:"submission identifier (24-char hex). Pass as submission_id to get_submission_test_results to fetch per-test results for this CI run."`
+	Key             string `json:"key,omitempty"`
 	BuildURL        string `json:"build_url"`
 	CommitOID       string `json:"commit_oid"`
 	RecordedAt      string `json:"recorded_at"`
@@ -396,6 +404,90 @@ func listRecentSubmissions(c *Client) mcp.ToolHandlerFor[submissionsInput, submi
 			Submissions: r.Submissions,
 			NextCursor:  r.Metadata.After,
 			WebURL:      c.WebURL("/repos/" + url.PathEscape(in.Owner) + "/" + url.PathEscape(in.Name)),
+		}, nil
+	}
+}
+
+// --- get_submission_test_results --------------------------------------------
+
+type submissionTestResultsInput struct {
+	Owner          string `json:"owner" jsonschema:"the repository owner, case-insensitive (e.g. 'acme')"`
+	Name           string `json:"name" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
+	SubmissionID   string `json:"submission_id" jsonschema:"submission identifier (24-char hex). Get this from list_recent_submissions."`
+	Status         string `json:"status,omitempty" jsonschema:"optional outcome filter: 'failed' (matches failure + error — typical red build), 'failure', 'error', 'skipped', 'passed', or 'all' (default)"`
+	OrganizationID string `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
+	Limit          int    `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 25)"`
+}
+
+type submissionTestResultOut struct {
+	ID         string  `json:"id"`
+	TestCaseID string  `json:"test_case_id"`
+	Name       string  `json:"name"`
+	Suite      string  `json:"suite,omitempty"`
+	Class      string  `json:"class,omitempty"`
+	File       string  `json:"file,omitempty"`
+	Conclusion string  `json:"conclusion" jsonschema:"passing | failure | error | skipped | unknown"`
+	DurationUS int64   `json:"duration_us" jsonschema:"per-attempt duration in microseconds"`
+	Message    *string `json:"message,omitempty"`
+	RanAt      string  `json:"ran_at"`
+	RunCount   int     `json:"run_count" jsonschema:"retry attempt number (1=first attempt, 2+=retries)"`
+}
+
+type submissionTestResultsOutput struct {
+	Owner        string                    `json:"owner"`
+	Name         string                    `json:"name"`
+	SubmissionID string                    `json:"submission_id"`
+	Status       string                    `json:"status,omitempty"`
+	Count        int64                     `json:"count"`
+	Tests        []submissionTestResultOut `json:"tests"`
+	NextCursor   *string                   `json:"next_cursor,omitempty"`
+	WebURL       string                    `json:"web_url"`
+}
+
+func getSubmissionTestResults(c *Client) mcp.ToolHandlerFor[submissionTestResultsInput, submissionTestResultsOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in submissionTestResultsInput) (*mcp.CallToolResult, submissionTestResultsOutput, error) {
+		if strings.TrimSpace(in.Owner) == "" || strings.TrimSpace(in.Name) == "" {
+			return nil, submissionTestResultsOutput{}, fmt.Errorf("owner and name are required")
+		}
+		subID := strings.TrimSpace(in.SubmissionID)
+		if len(subID) != 24 {
+			return nil, submissionTestResultsOutput{}, fmt.Errorf("submission_id must be a 24-char hex string, got %d chars", len(subID))
+		}
+
+		params := url.Values{}
+		if in.Status != "" {
+			params.Set("status", in.Status)
+		}
+		if in.Limit > 0 && in.Limit <= 100 {
+			params.Set("limit", strconv.Itoa(in.Limit))
+		}
+		addOrgParam(params, in.OrganizationID)
+
+		type resp struct {
+			Count    int64                     `json:"count"`
+			Tests    []submissionTestResultOut `json:"tests"`
+			Metadata struct {
+				After *string `json:"after"`
+				Limit int     `json:"limit"`
+			} `json:"metadata"`
+		}
+		var r resp
+		path := fmt.Sprintf("/api/repos/%s/%s/submissions/%s/tests",
+			url.PathEscape(in.Owner), url.PathEscape(in.Name), url.PathEscape(subID))
+		if err := c.GetJSON(ctx, path, params, &r); err != nil {
+			return nil, submissionTestResultsOutput{}, err
+		}
+
+		return nil, submissionTestResultsOutput{
+			Owner:        in.Owner,
+			Name:         in.Name,
+			SubmissionID: subID,
+			Status:       in.Status,
+			Count:        r.Count,
+			Tests:        r.Tests,
+			NextCursor:   r.Metadata.After,
+			WebURL: c.WebURL("/repos/" + url.PathEscape(in.Owner) + "/" +
+				url.PathEscape(in.Name) + "/builds/" + url.PathEscape(subID)),
 		}, nil
 	}
 }

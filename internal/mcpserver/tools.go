@@ -565,3 +565,5 @@ func getRepoCoverage(c *Client) mcp.ToolHandlerFor[repoMetricInput, coverageOutp
 		}, nil
 	}
 }
+
+// Retrigger agent-code-review after Anthropic credit top-up.

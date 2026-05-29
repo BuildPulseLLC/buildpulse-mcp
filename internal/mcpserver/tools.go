@@ -429,7 +429,7 @@ type submissionTestResultOut struct {
 	Conclusion string  `json:"conclusion" jsonschema:"passing | failure | error | skipped | unknown"`
 	DurationUS int64   `json:"duration_us" jsonschema:"per-attempt duration in microseconds"`
 	Message    *string `json:"message,omitempty" jsonschema:"one-line failure summary; for jest-junit runners this is synthesized from the first line of body"`
-	Body       *string `json:"body,omitempty" jsonschema:"full failure detail — assertion + stack trace — truncated at 2000 chars; surface this to the user when they ask why a test failed"`
+	Body       *string `json:"body,omitempty" jsonschema:"full failure detail — assertion message + stack trace — truncated at 2000 bytes (UTF-8 safe). Surface this verbatim to the user when they ask why a test failed; do not paraphrase the assertion text."`
 	RanAt      string  `json:"ran_at"`
 	RunCount   int     `json:"run_count" jsonschema:"retry attempt number (1=first attempt, 2+=retries)"`
 }

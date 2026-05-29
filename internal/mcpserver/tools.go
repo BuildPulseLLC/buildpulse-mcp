@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +66,13 @@ func registerTools(s *mcp.Server, c *Client) {
 		Description: "Return the individual test results recorded against one submission (one CI run). Use `status=\"failed\"` to filter to just the failures and errors — the typical \"red build\" set. Each result carries the test name / suite / file / class, the per-attempt duration in microseconds, the failure message, and the runner-recorded run count (1=first attempt, 2+=retries). Get a submission `id` from list_recent_submissions first.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, getSubmissionTestResults(c))
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_recent_failures",
+		Title:       "Get failures across recent CI runs",
+		Description: "Return tests that failed in any of the most recent N submissions for a repository, aggregated by test identity (name+suite+file). For each test, returns failure_count (how many of the recent runs it failed in), most_recent_failure_at, most_recent_build_url, and the failure message from the most recent occurrence. Unlike find_flaky_tests, this is NOT filtered by the statistical flakiness threshold — it surfaces every test that failed in the recent window, which matches workflows where customers only upload to BuildPulse after their own CI has already passed (so any failure observed by BuildPulse is by definition unexpected). Default window is the last 10 submissions.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, getRecentFailures(c))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_flakiness",
@@ -198,6 +206,8 @@ type flakyTestOut struct {
 	FirstDisruptionAt   *string  `json:"first_disruption_at,omitempty"`
 	Tags                []string `json:"tags,omitempty"`
 	TimeConsumed        *int64   `json:"time_consumed,omitempty" jsonschema:"total time spent on this test across recent runs, in microseconds — useful as a silent indicator of retries/slow specs"`
+	PassRate            *float64 `json:"pass_rate,omitempty" jsonschema:"fraction of runs in which this test passed (0.0-1.0). Lower = worse. Sort by this to surface unreliable tests."`
+	AvgDurationMs       *float64 `json:"avg_duration_ms,omitempty" jsonschema:"average per-attempt duration in milliseconds. Sort descending to find the slowest tests."`
 	WebURL              string   `json:"web_url"`
 }
 
@@ -216,7 +226,7 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 
 		params := url.Values{}
 		params.Set("repository", in.Repository)
-		params.Set("include", "disruptiveness_ratio,nondeterministic_negative_result_count,nondeterminism_first_recorded_at,tags,time_consumed")
+		params.Set("include", "disruptiveness_ratio,nondeterministic_negative_result_count,nondeterminism_first_recorded_at,tags,time_consumed,pass_rate,avg_duration_ms")
 		addOrgParam(params, in.OrganizationID)
 
 		if in.Limit > 0 && in.Limit <= 100 {
@@ -260,6 +270,8 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 				FirstDisruptionAt   *string  `json:"first_disruption_at,omitempty"`
 				Tags                []string `json:"tags,omitempty"`
 				TimeConsumed        *int64   `json:"time_consumed,omitempty"`
+				PassRate            *float64 `json:"pass_rate,omitempty"`
+				AvgDurationMs       *float64 `json:"avg_duration_ms,omitempty"`
 			} `json:"tests"`
 		}
 		var resp platformFlakyResp
@@ -286,6 +298,8 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 				FirstDisruptionAt:   t.FirstDisruptionAt,
 				Tags:                t.Tags,
 				TimeConsumed:        t.TimeConsumed,
+				PassRate:            t.PassRate,
+				AvgDurationMs:       t.AvgDurationMs,
 				WebURL:              c.WebURL("/tests/" + url.PathEscape(t.ID)),
 			})
 		}
@@ -491,6 +505,172 @@ func getSubmissionTestResults(c *Client) mcp.ToolHandlerFor[submissionTestResult
 				url.PathEscape(in.Name) + "/builds/" + url.PathEscape(subID)),
 		}, nil
 	}
+}
+
+// --- get_recent_failures ----------------------------------------------------
+
+type recentFailuresInput struct {
+	Owner          string `json:"owner" jsonschema:"the repository owner, case-insensitive (e.g. 'acme')"`
+	Name           string `json:"name" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
+	OrganizationID string `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
+	Submissions    int    `json:"submissions,omitempty" jsonschema:"how many recent submissions to look back across, 1-50 (default 10)"`
+}
+
+type recentFailureOut struct {
+	TestCaseID            string  `json:"test_case_id"`
+	Name                  string  `json:"name"`
+	Suite                 string  `json:"suite,omitempty"`
+	Class                 string  `json:"class,omitempty"`
+	File                  string  `json:"file,omitempty"`
+	FailureCount          int     `json:"failure_count" jsonschema:"how many of the inspected submissions this test failed in"`
+	MostRecentRanAt       string  `json:"most_recent_ran_at"`
+	MostRecentBuildURL    string  `json:"most_recent_build_url,omitempty"`
+	MostRecentMessage     *string `json:"most_recent_message,omitempty"`
+	MostRecentBody        *string `json:"most_recent_body,omitempty"`
+	MostRecentDurationUS  int64   `json:"most_recent_duration_us"`
+}
+
+type recentFailuresOutput struct {
+	Owner               string             `json:"owner"`
+	Name                string             `json:"name"`
+	SubmissionsInspected int               `json:"submissions_inspected"`
+	UniqueTestsFailed   int                `json:"unique_tests_failed"`
+	Failures            []recentFailureOut `json:"failures"`
+	WebURL              string             `json:"web_url"`
+}
+
+func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recentFailuresOutput] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in recentFailuresInput) (*mcp.CallToolResult, recentFailuresOutput, error) {
+		if strings.TrimSpace(in.Owner) == "" || strings.TrimSpace(in.Name) == "" {
+			return nil, recentFailuresOutput{}, fmt.Errorf("owner and name are required")
+		}
+		limit := 10
+		if in.Submissions > 0 && in.Submissions <= 50 {
+			limit = in.Submissions
+		}
+
+		// Step 1: list recent submissions to get the IDs to drill into.
+		subParams := url.Values{}
+		subParams.Set("limit", strconv.Itoa(limit))
+		addOrgParam(subParams, in.OrganizationID)
+
+		type submissionLite struct {
+			ID       string `json:"id"`
+			BuildURL string `json:"build_url"`
+		}
+		type subsResp struct {
+			Submissions []submissionLite `json:"submissions"`
+		}
+		var sr subsResp
+		subPath := fmt.Sprintf("/api/repos/%s/%s/submissions",
+			url.PathEscape(in.Owner), url.PathEscape(in.Name))
+		if err := c.GetJSON(ctx, subPath, subParams, &sr); err != nil {
+			return nil, recentFailuresOutput{}, err
+		}
+
+		// Step 2: for each submission, fetch failed tests and aggregate.
+		// Key by testCaseId so retries within one submission and the
+		// same logical test across multiple submissions collapse.
+		type testKey = string
+		agg := map[testKey]*recentFailureOut{}
+
+		type failedTest struct {
+			TestCaseID string  `json:"test_case_id"`
+			Name       string  `json:"name"`
+			Suite      string  `json:"suite,omitempty"`
+			Class      string  `json:"class,omitempty"`
+			File       string  `json:"file,omitempty"`
+			DurationUS int64   `json:"duration_us"`
+			Message    *string `json:"message,omitempty"`
+			Body       *string `json:"body,omitempty"`
+			RanAt      string  `json:"ran_at"`
+		}
+		type stResp struct {
+			Tests []failedTest `json:"tests"`
+		}
+
+		seenInThisSubmission := map[string]map[testKey]bool{}
+
+		for _, s := range sr.Submissions {
+			seenInThisSubmission[s.ID] = map[testKey]bool{}
+			stParams := url.Values{}
+			stParams.Set("status", "failed")
+			stParams.Set("limit", "100")
+			addOrgParam(stParams, in.OrganizationID)
+
+			var r stResp
+			stPath := fmt.Sprintf("/api/repos/%s/%s/submissions/%s/tests",
+				url.PathEscape(in.Owner), url.PathEscape(in.Name), url.PathEscape(s.ID))
+			if err := c.GetJSON(ctx, stPath, stParams, &r); err != nil {
+				// best-effort: skip submissions that error so a flaky
+				// one doesn't sink the whole response
+				continue
+			}
+
+			for _, t := range r.Tests {
+				if t.TestCaseID == "" {
+					continue
+				}
+				// One submission, even with retries on the same test,
+				// counts as a single failure for the per-submission tally.
+				if seenInThisSubmission[s.ID][t.TestCaseID] {
+					continue
+				}
+				seenInThisSubmission[s.ID][t.TestCaseID] = true
+
+				row, ok := agg[t.TestCaseID]
+				if !ok {
+					row = &recentFailureOut{
+						TestCaseID:           t.TestCaseID,
+						Name:                 t.Name,
+						Suite:                t.Suite,
+						Class:                t.Class,
+						File:                 t.File,
+						MostRecentRanAt:      t.RanAt,
+						MostRecentBuildURL:   s.BuildURL,
+						MostRecentMessage:    t.Message,
+						MostRecentBody:       t.Body,
+						MostRecentDurationUS: t.DurationUS,
+					}
+					agg[t.TestCaseID] = row
+				}
+				row.FailureCount++
+				// Submissions are returned newest-first, so the first
+				// time we see a testCaseId is the most recent occurrence;
+				// don't overwrite the "most_recent_*" fields after that.
+			}
+		}
+
+		// Materialize, sort by failure_count desc then name asc.
+		failures := make([]recentFailureOut, 0, len(agg))
+		for _, row := range agg {
+			failures = append(failures, *row)
+		}
+		// Insertion-sort-ish: simple stable sort using the stdlib.
+		sortRecentFailures(failures)
+
+		return nil, recentFailuresOutput{
+			Owner:                in.Owner,
+			Name:                 in.Name,
+			SubmissionsInspected: len(sr.Submissions),
+			UniqueTestsFailed:    len(failures),
+			Failures:             failures,
+			WebURL: c.WebURL("/repos/" + url.PathEscape(in.Owner) +
+				"/" + url.PathEscape(in.Name) + "/builds"),
+		}, nil
+	}
+}
+
+// sortRecentFailures orders failures by FailureCount desc, then Name asc.
+// Kept as a named helper so the slot is obvious if we ever swap in a
+// different ranking.
+func sortRecentFailures(rows []recentFailureOut) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].FailureCount != rows[j].FailureCount {
+			return rows[i].FailureCount > rows[j].FailureCount
+		}
+		return rows[i].Name < rows[j].Name
+	})
 }
 
 // --- get_repo_flakiness ------------------------------------------------------

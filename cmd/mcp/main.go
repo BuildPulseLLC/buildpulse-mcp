@@ -12,7 +12,7 @@
 // Configuration:
 //
 //	BUILDPULSE_TOKEN   Required. BuildPulse API token from
-//	                   app.buildpulse.io. Either shape works:
+//	                   buildpulse.io. Either shape works:
 //	                   `bp_<64-hex>` (current) or `<40-hex>` (legacy).
 //	PLATFORM_API_URL   Optional. Default https://platform.buildpulse.io.
 package main
@@ -35,7 +35,7 @@ func main() {
 	if token == "" {
 		// Stderr only — stdout is the MCP transport channel.
 		fmt.Fprintln(os.Stderr, "buildpulse-mcp: BUILDPULSE_TOKEN environment variable is required.")
-		fmt.Fprintln(os.Stderr, "Get a token at https://app.buildpulse.io → Organization Settings → API Tokens.")
+		fmt.Fprintln(os.Stderr, "Get a token at https://buildpulse.io → Organization Settings → API Tokens.")
 		os.Exit(1)
 	}
 

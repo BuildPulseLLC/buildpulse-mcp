@@ -44,7 +44,7 @@ configSchema:
       type: string
       title: BuildPulse API token
       description: >
-        BuildPulse API token. Generate one at app.buildpulse.io →
+        BuildPulse API token. Generate one at buildpulse.io →
         Organization Settings → API Tokens. Either shape is accepted:
         the current `bp_<64-hex>` format or the legacy 40-character
         hexadecimal format.

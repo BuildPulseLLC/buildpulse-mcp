@@ -19,7 +19,7 @@
       "environmentVariables": [
         {
           "name": "BUILDPULSE_TOKEN",
-          "description": "BuildPulse API token (either `bp_<64-hex>` or legacy 40-hex shape). Get one at app.buildpulse.io → Organization Settings → API Tokens.",
+          "description": "BuildPulse API token (either `bp_<64-hex>` or legacy 40-hex shape). Get one at buildpulse.io → Organization Settings → API Tokens.",
           "isRequired": true,
           "isSecret": true
         },

@@ -27,7 +27,7 @@ Windows x64.
 
 ## Configure
 
-Get a BuildPulse API token at <https://app.buildpulse.io> → Organization
+Get a BuildPulse API token at <https://buildpulse.io> → Organization
 Settings → API Tokens.
 
 ### Claude Desktop

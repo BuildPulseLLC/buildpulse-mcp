@@ -147,7 +147,7 @@ func main() {
 				"bearer": map[string]any{
 					"header":      "Authorization",
 					"scheme":      "Bearer",
-					"description": "BuildPulse API token (created at https://app.buildpulse.io). Accepted shapes: `bp_<64-hex>` (current) or `<40-hex>` (legacy).",
+					"description": "BuildPulse API token (created at https://buildpulse.io). Accepted shapes: `bp_<64-hex>` (current) or `<40-hex>` (legacy).",
 				},
 			},
 			"documentation": "https://platform.buildpulse.io/docs/mcp",

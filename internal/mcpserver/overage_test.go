@@ -149,36 +149,65 @@ func resultText(res *mcp.CallToolResult) string {
 }
 
 func TestTool_Over402_ReturnsFriendlyResult(t *testing.T) {
-	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusPaymentRequired)
-		_, _ = w.Write([]byte(`{"code":"plan_limit_exceeded","message":"You've reached your plan's monthly test-result limit.","upgradeUrl":"https://app.buildpulse.io/settings/billing"}`))
-	}))
-	defer platform.Close()
+	// platform-api emits HTTP 402 with the SAME `plan_limit_exceeded` code for
+	// BOTH the SOFT stage (3-14 days over) and the HARD stage (14 days+); only
+	// the human-readable `message` differs between them. MCP does not compute
+	// the stage — it relays whatever message platform-api sends. These cases
+	// prove the translation is stage-agnostic: any plan_limit_exceeded 402,
+	// regardless of the stage-specific message, yields the same successful,
+	// friendly, non-error tool result that surfaces the upstream message and
+	// upgradeUrl and never leaks a raw 402.
+	cases := []struct {
+		name    string
+		body    string
+		wantMsg string // the stage-specific message must be surfaced verbatim
+	}{
+		{
+			name:    "soft stage",
+			body:    `{"code":"plan_limit_exceeded","message":"Your data is safe but read access is locked. Upgrade to restore it.","upgradeUrl":"https://app.buildpulse.io/settings/billing"}`,
+			wantMsg: "Your data is safe but read access is locked. Upgrade to restore it.",
+		},
+		{
+			name:    "hard stage",
+			body:    `{"code":"plan_limit_exceeded","message":"Processing is paused. Upgrade to resume and restore your data.","upgradeUrl":"https://app.buildpulse.io/settings/billing"}`,
+			wantMsg: "Processing is paused. Upgrade to resume and restore your data.",
+		},
+	}
 
-	cs := newTestServerSession(t, platform)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "find_flaky_tests",
-		Arguments: map[string]any{"repository": "widgets"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool returned a protocol error: %v", err)
-	}
-	if res.IsError {
-		t.Fatalf("over-limit must be a SUCCESSFUL result, got IsError=true: %s", resultText(res))
-	}
-	text := resultText(res)
-	for _, want := range []string{
-		"monthly test-result limit",
-		"still recording every test result",
-		"https://app.buildpulse.io/settings/billing",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("friendly text missing %q in:\n%s", want, text)
-		}
-	}
-	if strings.Contains(strings.ToLower(text), "402") || strings.Contains(text, "platform API returned") {
-		t.Errorf("must not leak raw HTTP/402 detail: %s", text)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusPaymentRequired)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer platform.Close()
+
+			cs := newTestServerSession(t, platform)
+			res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+				Name:      "find_flaky_tests",
+				Arguments: map[string]any{"repository": "widgets"},
+			})
+			if err != nil {
+				t.Fatalf("CallTool returned a protocol error: %v", err)
+			}
+			if res.IsError {
+				t.Fatalf("over-limit must be a SUCCESSFUL result, got IsError=true: %s", resultText(res))
+			}
+			text := resultText(res)
+			for _, want := range []string{
+				tc.wantMsg,
+				"still recording every test result",
+				"https://app.buildpulse.io/settings/billing",
+			} {
+				if !strings.Contains(text, want) {
+					t.Errorf("friendly text missing %q in:\n%s", want, text)
+				}
+			}
+			if strings.Contains(strings.ToLower(text), "402") || strings.Contains(text, "platform API returned") {
+				t.Errorf("must not leak raw HTTP/402 detail: %s", text)
+			}
+		})
 	}
 }
 

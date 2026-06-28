@@ -32,7 +32,59 @@ var Version = "0.0.0-dev"
 const (
 	// DefaultPlatformURL is the production base URL.
 	DefaultPlatformURL = "https://platform.buildpulse.io"
+
+	// planLimitCode is the stable machine-readable code platform-api sends
+	// in the body of an HTTP 402 response when an organization is over its
+	// enforced monthly test-result limit and READ access to data is being
+	// restricted. The 402 contract is owned by the platform-api enforcement
+	// PR — `{"code":"plan_limit_exceeded","message":...,"upgradeUrl":...}` —
+	// so this constant must not change without coordinating there.
+	planLimitCode = "plan_limit_exceeded"
 )
+
+// PlanLimitError is returned by the client when a data-read endpoint
+// responds with HTTP 402 and the documented plan_limit_exceeded body. It
+// signals that the caller's BuildPulse organization is over its enforced
+// monthly test-result limit, so platform-api is restricting READ access to
+// data. Ingestion is never affected — every test result is still recorded.
+//
+// MCP does NOT compute entitlement itself: the decision to enforce is made
+// entirely upstream in platform-api. This error is purely a typed carrier
+// for the 402 so that tool handlers can translate it into a friendly,
+// non-error tool result (see overageAware in tools.go) instead of leaking a
+// raw HTTP 402 or a stack trace to the model.
+type PlanLimitError struct {
+	// Message is the human-readable explanation supplied by platform-api.
+	Message string
+	// UpgradeURL is a deep link to upgrade the plan, supplied by platform-api.
+	UpgradeURL string
+}
+
+func (e *PlanLimitError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "plan limit exceeded"
+}
+
+// parsePlanLimit interprets the body of an HTTP 402 response. It returns a
+// non-nil *PlanLimitError only when the body is the documented
+// plan_limit_exceeded JSON; any other 402 body (or unparseable body) yields
+// nil so the caller falls back to ordinary error handling.
+func parsePlanLimit(body []byte) *PlanLimitError {
+	var b struct {
+		Code       string `json:"code"`
+		Message    string `json:"message"`
+		UpgradeURL string `json:"upgradeUrl"`
+	}
+	if err := json.Unmarshal(body, &b); err != nil {
+		return nil
+	}
+	if b.Code != planLimitCode {
+		return nil
+	}
+	return &PlanLimitError{Message: b.Message, UpgradeURL: b.UpgradeURL}
+}
 
 // UserAgent identifies the MCP server to the platform API in access
 // logs. Stamped on every outbound request. Function (not constant) so
@@ -123,6 +175,14 @@ func (c *Client) Get(ctx context.Context, path string, params url.Values) ([]byt
 		return nil, "", fmt.Errorf("authentication failed (401) — token is missing, invalid, or your BuildPulse organization has no active plan")
 	case http.StatusNotFound:
 		return nil, "", fmt.Errorf("not found (404) — the repository or test does not exist, or is not in your organization")
+	case http.StatusPaymentRequired:
+		// platform-api returns 402 with a plan_limit_exceeded body on
+		// data-read endpoints when an org is over an enforced limit. Surface
+		// it as a typed error so tool handlers can render a friendly result;
+		// any other 402 shape falls through to the generic error path below.
+		if pe := parsePlanLimit(body); pe != nil {
+			return nil, "", pe
+		}
 	}
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("platform API returned %d: %s", resp.StatusCode, truncate(body, 200))

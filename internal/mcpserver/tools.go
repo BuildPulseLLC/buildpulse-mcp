@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -11,6 +12,54 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// overageAware wraps a tool handler so that a *PlanLimitError raised by the
+// platform API client (HTTP 402 plan_limit_exceeded) is translated into a
+// clean, SUCCESSFUL text result instead of a raw error or panic. Every tool
+// is registered through this wrapper, so the over-limit behavior is defined
+// in exactly one place and inherited uniformly — individual tools need no
+// 402-specific code.
+//
+// Tools whose endpoints are never restricted by platform-api
+// (account/organizations, billing, usage, health) simply never receive a
+// 402, so wrapping them is a harmless no-op. Any non-402 error (and any 402
+// that isn't the documented plan_limit_exceeded shape) is passed through
+// unchanged, preserving existing behavior exactly.
+func overageAware[In, Out any](h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		res, out, err := h(ctx, req, in)
+		var pe *PlanLimitError
+		if errors.As(err, &pe) {
+			var zero Out
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: planLimitText(pe)}},
+			}, zero, nil
+		}
+		return res, out, err
+	}
+}
+
+// planLimitText renders the user-facing message shown when a BuildPulse
+// organization is over its enforced monthly test-result limit. Wording
+// follows the overage-enforcement spec: lead with platform-api's own
+// explanation, reassure that ingestion continues uninterrupted, and point
+// to the upgrade URL. Both the message and upgrade URL come from
+// platform-api; sensible defaults cover the case where either is absent.
+func planLimitText(e *PlanLimitError) string {
+	msg := strings.TrimSpace(e.Message)
+	if msg == "" {
+		msg = "Your BuildPulse organization is over its plan's monthly test-result limit."
+	}
+	var b strings.Builder
+	b.WriteString(msg)
+	b.WriteString("\n\nNothing has been lost: BuildPulse is still recording every test result for your organization. " +
+		"Only read access to this data is paused until you upgrade.")
+	if u := strings.TrimSpace(e.UpgradeURL); u != "" {
+		b.WriteString("\n\nUpgrade your plan to restore access: ")
+		b.WriteString(u)
+	}
+	return b.String()
+}
 
 // registerTools wires every BuildPulse MCP tool onto the supplied
 // server. Tools are intent-shaped, not 1:1 mappings of HTTP endpoints:
@@ -27,14 +76,14 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "List my BuildPulse organizations",
 		Description: "Return every BuildPulse organization the current MCP session can access. Multi-tenant users must call this first to discover the `id` (UUID) of the organization they want to scope subsequent tool calls to — pass that `id` as the `organization_id` argument on find_flaky_tests / get_test_history / list_recent_submissions / get_repo_flakiness / get_repo_coverage. Single-tenant callers will see exactly one entry and don't need to pass `organization_id`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, listMyOrganizations(c))
+	}, overageAware(listMyOrganizations(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_repositories",
 		Title:       "List repositories in a BuildPulse organization",
 		Description: "Return every repository BuildPulse is monitoring for the given organization, sorted alphabetically. Call this whenever the user asks a repo-scoped question (\"do I have flaky tests?\", \"why is CI red?\") without naming a specific repo — the `name` field is what you pass to find_flaky_tests / list_recent_submissions / get_repo_flakiness / get_repo_coverage as their `repository` argument. For multi-tenant users, pass `organization_id` (call list_my_organizations first to enumerate); single-tenant tokens see exactly the bound org's repos.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, listRepositories(c))
+	}, overageAware(listRepositories(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "find_flaky_tests",
@@ -44,49 +93,49 @@ func registerTools(s *mcp.Server, c *Client) {
 			ReadOnlyHint: true,
 			Title:        "Find flaky tests",
 		},
-	}, findFlakyTests(c))
+	}, overageAware(findFlakyTests(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_test_history",
 		Title:       "Get test history",
 		Description: "Return the most-recent disruption (failure / flake) events for a specific test, identified by its BuildPulse test_id. Up to 10 events from the last 14 days. Each event includes the CI build URL and commit SHA — useful for correlating regressions with code changes.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, getTestHistory(c))
+	}, overageAware(getTestHistory(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_recent_submissions",
 		Title:       "List recent CI runs",
 		Description: "List the most-recent test submissions (CI runs) for a repository. Each entry corresponds to one CI run that uploaded test results to BuildPulse. Reach for this first when a user asks \"why is CI red?\" or \"what changed in the last hour\". Each entry includes an `id` you can pass to get_submission_test_results to drill into the individual test results for that run.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, listRecentSubmissions(c))
+	}, overageAware(listRecentSubmissions(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_submission_test_results",
 		Title:       "Get per-test results for a submission",
 		Description: "Return the individual test results recorded against one submission (one CI run). Use `status=\"failed\"` to filter to just the failures and errors — the typical \"red build\" set. Each result carries the test name / suite / file / class, the per-attempt duration in microseconds, the failure message, and the runner-recorded run count (1=first attempt, 2+=retries). Get a submission `id` from list_recent_submissions first.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, getSubmissionTestResults(c))
+	}, overageAware(getSubmissionTestResults(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_recent_failures",
 		Title:       "Get failures across recent CI runs",
 		Description: "Return tests that failed in any of the most recent N submissions for a repository, aggregated by test identity (name+suite+file). For each test, returns failure_count (how many of the recent runs it failed in), most_recent_failure_at, most_recent_build_url, and the failure message from the most recent occurrence. Unlike find_flaky_tests, this is NOT filtered by the statistical flakiness threshold — it surfaces every test that failed in the recent window, which matches workflows where customers only upload to BuildPulse after their own CI has already passed (so any failure observed by BuildPulse is by definition unexpected). Default window is the last 10 submissions.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, getRecentFailures(c))
+	}, overageAware(getRecentFailures(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_flakiness",
 		Title:       "Get repo flakiness %",
 		Description: "Return the current flakiness percentage for a repository over the last 14 days. Higher is worse. Use this for a quick health snapshot before drilling into individual tests with find_flaky_tests.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, getRepoFlakiness(c))
+	}, overageAware(getRepoFlakiness(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_coverage",
 		Title:       "Get repo coverage %",
 		Description: "Return the current test coverage percentage for a repository (from the most-recent coverage report).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, getRepoCoverage(c))
+	}, overageAware(getRepoCoverage(c)))
 }
 
 // addOrgParam appends `organization_id=<uuid>` to the given query
@@ -745,5 +794,3 @@ func getRepoCoverage(c *Client) mcp.ToolHandlerFor[repoMetricInput, coverageOutp
 		}, nil
 	}
 }
-
-// Retrigger agent-code-review after Anthropic credit top-up.

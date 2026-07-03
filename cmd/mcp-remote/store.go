@@ -51,4 +51,13 @@ type Store interface {
 	PutPending(ctx context.Context, state string, p *pendingAuth) error
 	// PopPending atomically reads + deletes the pending entry.
 	PopPending(ctx context.Context, state string) (*pendingAuth, error)
+
+	// PutRefresh persists a refresh token (~30-day TTL). Implementations
+	// with no refresh backend configured (e.g. DynamoDB store without the
+	// refresh table) return an error so the caller degrades to "no
+	// refresh token issued" rather than pretending it stored one.
+	PutRefresh(ctx context.Context, rt *refreshToken) error
+	// PopRefresh atomically reads + deletes the refresh token (single-use
+	// rotation). Returns ErrNotFound if unknown, already rotated, or TTL'd.
+	PopRefresh(ctx context.Context, hashedToken string) (*refreshToken, error)
 }

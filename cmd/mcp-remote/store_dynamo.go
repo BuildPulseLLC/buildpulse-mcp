@@ -10,9 +10,11 @@ package main
 //   - mcp-oauth-clients  durable, no TTL
 //   - mcp-oauth-codes    `expires_unix` Unix-epoch TTL (~60s)
 //   - mcp-oauth-pending  `expires_unix` Unix-epoch TTL (~15min)
+//   - mcp-oauth-refresh  `expires_unix` Unix-epoch TTL (~30d)
 //
 // Pop* uses DeleteItem with ReturnValues=ALL_OLD so the read + delete
-// is atomic — important for single-use authorization codes.
+// is atomic — important for single-use authorization codes and for
+// single-use refresh-token rotation.
 
 import (
 	"context"
@@ -60,19 +62,36 @@ type dynamoPendingItem struct {
 	ExpiresUnix   int64  `dynamodbav:"expires_unix"`
 }
 
-type dynamoStore struct {
-	client        *dynamodb.Client
-	clientsTable  string
-	codesTable    string
-	pendingTable  string
+type dynamoRefreshItem struct {
+	// HashedToken is base64(sha256(refresh token)) — the plaintext
+	// refresh token never lands in the table (same discipline as
+	// mcpSessions). The upstream Cognito refresh token IS stored, but
+	// application-encrypted (KMS) in CognitoRefreshEnc.
+	HashedToken       string   `dynamodbav:"hashed_token"`
+	ClientID          string   `dynamodbav:"client_id"`
+	Scope             string   `dynamodbav:"scope"`
+	UserSubject       string   `dynamodbav:"user_subject"`
+	UserEmail         string   `dynamodbav:"user_email"`
+	OrganizationIDs   []string `dynamodbav:"organization_ids,omitempty"`
+	CognitoRefreshEnc string   `dynamodbav:"cognito_refresh_enc"`
+	ExpiresUnix       int64    `dynamodbav:"expires_unix"`
 }
 
-func newDynamoStore(client *dynamodb.Client, clientsTable, codesTable, pendingTable string) *dynamoStore {
+type dynamoStore struct {
+	client       *dynamodb.Client
+	clientsTable string
+	codesTable   string
+	pendingTable string
+	refreshTable string
+}
+
+func newDynamoStore(client *dynamodb.Client, clientsTable, codesTable, pendingTable, refreshTable string) *dynamoStore {
 	return &dynamoStore{
 		client:       client,
 		clientsTable: clientsTable,
 		codesTable:   codesTable,
 		pendingTable: pendingTable,
+		refreshTable: refreshTable,
 	}
 }
 
@@ -224,6 +243,69 @@ func (d *dynamoStore) PopPending(ctx context.Context, state string) (*pendingAut
 		OriginalState: raw.OriginalState,
 		Scope:         raw.Scope,
 		Expires:       unixToTime(raw.ExpiresUnix),
+	}, nil
+}
+
+// --- refresh tokens -------------------------------------------------------
+
+func (d *dynamoStore) PutRefresh(ctx context.Context, rt *refreshToken) error {
+	if d.refreshTable == "" {
+		// No refresh table configured (e.g. rolled out before the
+		// environment PR that provisions it). Signal "not stored" so the
+		// caller omits refresh_token instead of handing back one that
+		// can never be redeemed.
+		return errors.New("refresh table not configured")
+	}
+	item, err := attributevalue.MarshalMap(dynamoRefreshItem{
+		HashedToken:       rt.HashedToken,
+		ClientID:          rt.ClientID,
+		Scope:             rt.Scope,
+		UserSubject:       rt.UserSubject,
+		UserEmail:         rt.UserEmail,
+		OrganizationIDs:   rt.OrganizationIDs,
+		CognitoRefreshEnc: rt.CognitoRefreshEnc,
+		ExpiresUnix:       rt.Expires.Unix(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal refresh: %w", err)
+	}
+	_, err = d.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(d.refreshTable),
+		Item:      item,
+	})
+	return err
+}
+
+func (d *dynamoStore) PopRefresh(ctx context.Context, hashedToken string) (*refreshToken, error) {
+	if d.refreshTable == "" {
+		return nil, ErrNotFound
+	}
+	out, err := d.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(d.refreshTable),
+		Key: map[string]types.AttributeValue{
+			"hashed_token": &types.AttributeValueMemberS{Value: hashedToken},
+		},
+		ReturnValues: types.ReturnValueAllOld,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out.Attributes) == 0 {
+		return nil, ErrNotFound
+	}
+	var raw dynamoRefreshItem
+	if err := attributevalue.UnmarshalMap(out.Attributes, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshal refresh: %w", err)
+	}
+	return &refreshToken{
+		HashedToken:       raw.HashedToken,
+		ClientID:          raw.ClientID,
+		Scope:             raw.Scope,
+		UserSubject:       raw.UserSubject,
+		UserEmail:         raw.UserEmail,
+		OrganizationIDs:   raw.OrganizationIDs,
+		CognitoRefreshEnc: raw.CognitoRefreshEnc,
+		Expires:           unixToTime(raw.ExpiresUnix),
 	}, nil
 }
 

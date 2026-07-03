@@ -80,7 +80,11 @@ resource "aws_ecs_task_definition" "definition" {
   memory                   = 512
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  task_role_arn            = data.terraform_remote_state.environment.outputs.iam.ecs_task_execution_role_arn
+  # Runtime identity exposed to the container. Scoped least-privilege role
+  # (DynamoDB on the MCP OAuth tables + Encrypt/Decrypt on the refresh CMK
+  # only) — NOT the shared *:* execution role, which stays as
+  # execution_role_arn for image pull + secret injection + logs.
+  task_role_arn = data.terraform_remote_state.environment.outputs.iam.mcp_remote_task_role_arn
   container_definitions = jsonencode([
     {
       essential         = true
@@ -112,6 +116,14 @@ resource "aws_ecs_task_definition" "definition" {
         { name = "OAUTH_CLIENTS_TABLE", value = data.terraform_remote_state.environment.outputs.mcp.oauth_clients_table },
         { name = "OAUTH_CODES_TABLE", value = data.terraform_remote_state.environment.outputs.mcp.oauth_codes_table },
         { name = "OAUTH_PENDING_TABLE", value = data.terraform_remote_state.environment.outputs.mcp.oauth_pending_table },
+        # Refresh-token grant (silent re-auth so users don't log in daily).
+        # OAUTH_REFRESH_TABLE stores rotating refresh tokens; OAUTH_KMS_KEY_ARN
+        # app-encrypts the upstream Cognito refresh token before it lands
+        # there. Both are Cognito-validated on refresh — see oauth.go
+        # tokenRefresh + crypto.go. When either is unset the server still
+        # mints working 1h access tokens, just without silent refresh.
+        { name = "OAUTH_REFRESH_TABLE", value = data.terraform_remote_state.environment.outputs.mcp.oauth_refresh_table },
+        { name = "OAUTH_KMS_KEY_ARN", value = data.terraform_remote_state.environment.outputs.mcp.oauth_refresh_kms_key_arn },
       ]
       # The Cognito client secret comes from Secrets Manager so it
       # never lands in the task definition JSON in plaintext. ECS pulls

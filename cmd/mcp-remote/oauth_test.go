@@ -20,7 +20,7 @@ import (
 // state (instead of poking sync.Maps directly).
 func newTestServer() (*oauthServer, *memoryStore) {
 	mem := newMemoryStore()
-	return newOAuthServer(mem), mem
+	return newOAuthServer(mem, plaintextCrypter{}), mem
 }
 
 func TestRegisterClient(t *testing.T) {

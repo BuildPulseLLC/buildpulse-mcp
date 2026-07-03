@@ -77,12 +77,24 @@ import (
 const (
 	// Access tokens expire in one hour. Short enough that compromised
 	// tokens are time-limited; long enough that we don't churn through
-	// refresh-token flows.
+	// refresh-token flows. This is also the window within which an
+	// offboarded user's access ends: once their Cognito account is
+	// disabled the next refresh (see tokenRefresh) fails, and the last
+	// access token they hold stops working when it expires.
 	accessTokenTTL = 1 * time.Hour
 
 	// Authorization codes are single-use and expire in 60 seconds —
 	// just long enough for the client to make the /token request.
 	authCodeTTL = 60 * time.Second
+
+	// Refresh tokens live up to 30 days — the same ceiling as the
+	// Cognito app client's refresh_token_validity (environment/cognito.tf
+	// aws_cognito_user_pool_client.mcp_client). We intentionally do NOT
+	// extend this on rotation: our refresh token must die when the
+	// upstream Cognito refresh token does, so the whole session is capped
+	// at ~30 days from the original interactive login — mirroring how the
+	// web app (Amplify) behaves.
+	refreshTokenTTL = 30 * 24 * time.Hour
 
 	// Single scope today. Read-only.
 	defaultScope = "buildpulse.read"
@@ -114,14 +126,25 @@ type oauthServer struct {
 	// store.go for the design context.
 	store Store
 
+	// crypter reversibly protects the upstream Cognito refresh token
+	// before it is written to the refresh-token store. Unlike the MCP
+	// tokens we only ever store hashed, the Cognito refresh token must be
+	// recoverable to drive Cognito's refresh grant, so it is encrypted at
+	// the application layer (KMS in prod, passthrough in local dev). See
+	// crypto.go.
+	crypter crypter
+
 	// Internal HTTP client for Cognito calls. Carved out so tests can
 	// inject a fake.
 	http *http.Client
 }
 
-func newOAuthServer(store Store) *oauthServer {
+func newOAuthServer(store Store, cr crypter) *oauthServer {
 	if store == nil {
 		store = newMemoryStore()
+	}
+	if cr == nil {
+		cr = plaintextCrypter{}
 	}
 	return &oauthServer{
 		issuer:          envOr(envIssuer, defaultIssuer),
@@ -129,6 +152,7 @@ func newOAuthServer(store Store) *oauthServer {
 		cognitoClientID: envOr(envCognitoClientID, ""),
 		cognitoSecret:   envOr(envCognitoSecret, ""),
 		store:           store,
+		crypter:         cr,
 		http:            &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -182,7 +206,33 @@ type authorizationCode struct {
 	UserSubject     string   // Cognito user sub
 	UserEmail       string
 	OrganizationIDs []string // org UUIDs resolved at callback time
-	Expires         time.Time
+	// CognitoRefreshEnc is the upstream Cognito refresh token, already
+	// encrypted by s.crypter at callback time. It rides along in the
+	// short-lived (60s) auth code so /token can persist it into the
+	// refresh-token store. Plaintext never lands in any store.
+	CognitoRefreshEnc string
+	Expires           time.Time
+}
+
+// refreshToken is a persisted OAuth refresh token. It is OAuth-internal
+// state (never read by platform-api — only mcpSessions are), so it lives
+// in the same Store as clients/codes/pending rather than in DocumentDB.
+//
+// Each refresh carries the encrypted upstream Cognito refresh token so
+// tokenRefresh can call Cognito's refresh grant: that call is the
+// revocation gate. Rotation is single-use — PopRefresh consumes the
+// presented token and a fresh one is issued (OAuth 2.1 §4.14 for public
+// clients). Expires is an absolute deadline that is carried forward
+// unchanged across rotations (see refreshTokenTTL).
+type refreshToken struct {
+	HashedToken       string // base64(sha256(refresh token)) — the store key
+	ClientID          string
+	Scope             string
+	UserSubject       string
+	UserEmail         string
+	OrganizationIDs   []string
+	CognitoRefreshEnc string // s.crypter-encrypted upstream Cognito refresh token
+	Expires           time.Time
 }
 
 // pendingAuth bridges the original /authorize request to the Cognito
@@ -322,13 +372,31 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Exchange the Cognito code for an ID token. We don't validate
-	// the ID token signature here — Cognito is trusted as the upstream
-	// IdP, and we're going through TLS to its token endpoint.
-	idClaims, err := s.exchangeCognitoCode(r.Context(), cognitoCode)
+	// Exchange the Cognito code for an ID token + refresh token. We don't
+	// validate the ID token signature here — Cognito is trusted as the
+	// upstream IdP, and we're going through TLS to its token endpoint.
+	// The refresh token lets us later re-mint access tokens (and re-check
+	// that the user is still valid) without another interactive login.
+	idClaims, cognitoRefresh, err := s.exchangeCognitoCode(r.Context(), cognitoCode)
 	if err != nil {
 		oauthError(w, http.StatusBadGateway, "upstream_error", "failed to exchange Cognito code: "+err.Error())
 		return
+	}
+
+	// Encrypt the upstream Cognito refresh token before it touches any
+	// store. Best-effort: if Cognito returned none (unexpected) or
+	// encryption fails, we simply won't issue a refresh token — the user
+	// still gets a working 1h access token, exactly as before this
+	// feature existed. No regression, just no silent refresh.
+	var cognitoRefreshEnc string
+	if cognitoRefresh != "" {
+		if enc, eerr := s.crypter.Encrypt(r.Context(), cognitoRefresh); eerr != nil {
+			log.Printf("callback: encrypt cognito refresh token failed for sub=%s: %v (refresh disabled for this session)", idClaims.Sub, eerr)
+		} else {
+			cognitoRefreshEnc = enc
+		}
+	} else {
+		log.Printf("callback: cognito returned no refresh_token for sub=%s (refresh disabled for this session)", idClaims.Sub)
 	}
 
 	// Resolve the Cognito user's BuildPulse org memberships so the
@@ -345,15 +413,16 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 
 	code := randomHex(32)
 	if err := s.store.PutCode(r.Context(), &authorizationCode{
-		Code:            code,
-		ClientID:        pending.ClientID,
-		RedirectURI:     pending.RedirectURI,
-		CodeChallenge:   pending.CodeChallenge,
-		Scope:           pending.Scope,
-		UserSubject:     idClaims.Sub,
-		UserEmail:       idClaims.Email,
-		OrganizationIDs: orgIDs,
-		Expires:         time.Now().Add(authCodeTTL),
+		Code:              code,
+		ClientID:          pending.ClientID,
+		RedirectURI:       pending.RedirectURI,
+		CodeChallenge:     pending.CodeChallenge,
+		Scope:             pending.Scope,
+		UserSubject:       idClaims.Sub,
+		UserEmail:         idClaims.Email,
+		OrganizationIDs:   orgIDs,
+		CognitoRefreshEnc: cognitoRefreshEnc,
+		Expires:           time.Now().Add(authCodeTTL),
 	}); err != nil {
 		oauthError(w, http.StatusInternalServerError, "server_error", "failed to persist authorization code")
 		return
@@ -371,20 +440,31 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, finalRedirect, http.StatusFound)
 }
 
-// token is the /oauth/token endpoint. Supports the authorization_code
-// grant with PKCE today; refresh_token is left as a TODO.
+// token is the /oauth/token endpoint. It dispatches on grant_type:
+// authorization_code (initial PKCE exchange) and refresh_token (silent
+// re-mint, Cognito-validated).
 func (s *oauthServer) token(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "could not parse form body")
 		return
 	}
-	grantType := r.PostFormValue("grant_type")
-	if grantType != "authorization_code" {
+	switch r.PostFormValue("grant_type") {
+	case "authorization_code":
+		s.tokenAuthorizationCode(w, r)
+	case "refresh_token":
+		s.tokenRefresh(w, r)
+	default:
 		oauthError(w, http.StatusBadRequest, "unsupported_grant_type",
-			"only 'authorization_code' is supported")
-		return
+			"only 'authorization_code' and 'refresh_token' are supported")
 	}
+}
 
+// tokenAuthorizationCode handles the initial PKCE code exchange. On
+// success it persists an mcpSession (so platform-api accepts the access
+// token) and, when the session carries an upstream Cognito refresh
+// token, issues a rotating refresh token so the client can stay signed
+// in for up to refreshTokenTTL without another interactive login.
+func (s *oauthServer) tokenAuthorizationCode(w http.ResponseWriter, r *http.Request) {
 	code := r.PostFormValue("code")
 	codeVerifier := r.PostFormValue("code_verifier")
 	clientID := r.PostFormValue("client_id")
@@ -434,14 +514,148 @@ func (s *oauthServer) token(w http.ResponseWriter, r *http.Request) {
 		log.Printf("persistMCPSession ok for %s (%d orgs)", auth.UserEmail, len(auth.OrganizationIDs))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"access_token": accessToken,
 		"token_type":   "Bearer",
 		"expires_in":   int(accessTokenTTL.Seconds()),
 		"scope":        auth.Scope,
-	})
+	}
+
+	// Issue a refresh token only if we captured an (encrypted) upstream
+	// Cognito refresh token at callback time. Best-effort: a store
+	// failure just omits refresh_token — the client keeps a working 1h
+	// access token, same as before this feature.
+	if auth.CognitoRefreshEnc != "" {
+		refreshTokenStr := randomHex(32)
+		rt := &refreshToken{
+			HashedToken:       hashTokenB64(refreshTokenStr),
+			ClientID:          auth.ClientID,
+			Scope:             auth.Scope,
+			UserSubject:       auth.UserSubject,
+			UserEmail:         auth.UserEmail,
+			OrganizationIDs:   auth.OrganizationIDs,
+			CognitoRefreshEnc: auth.CognitoRefreshEnc,
+			Expires:           time.Now().Add(refreshTokenTTL),
+		}
+		if perr := s.store.PutRefresh(r.Context(), rt); perr != nil {
+			log.Printf("PutRefresh failed for %s: %v (no refresh_token issued)", auth.UserEmail, perr)
+		} else {
+			resp["refresh_token"] = refreshTokenStr
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// tokenRefresh handles the refresh_token grant. It consumes the
+// presented refresh token (single-use rotation), then uses the stored
+// upstream Cognito refresh token to re-authenticate against Cognito.
+// That Cognito call is the revocation gate: for a disabled/offboarded
+// user Cognito rejects the refresh, we return invalid_grant, and the
+// MCP client is forced back through interactive login (which also fails
+// for a disabled user) — so access ends within one access-token TTL.
+func (s *oauthServer) tokenRefresh(w http.ResponseWriter, r *http.Request) {
+	presented := r.PostFormValue("refresh_token")
+	clientID := r.PostFormValue("client_id")
+	if presented == "" {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+		return
+	}
+
+	// Single-use: atomically read + delete. A replayed (already-rotated)
+	// token misses here and is rejected — basic reuse detection.
+	rt, err := s.store.PopRefresh(r.Context(), hashTokenB64(presented))
+	if err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token is unknown, already used, or expired")
+		return
+	}
+	if time.Now().After(rt.Expires) {
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token has expired; re-authenticate")
+		return
+	}
+	if clientID != "" && rt.ClientID != clientID {
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh_token was issued to a different client")
+		return
+	}
+
+	// Recover the upstream Cognito refresh token and re-authenticate.
+	cognitoRefresh, derr := s.crypter.Decrypt(r.Context(), rt.CognitoRefreshEnc)
+	if derr != nil {
+		log.Printf("tokenRefresh: decrypt cognito refresh token failed for %s: %v", rt.UserEmail, derr)
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "could not refresh session; re-authenticate")
+		return
+	}
+	claims, cerr := s.refreshCognito(r.Context(), cognitoRefresh)
+	if cerr != nil {
+		// The most common cause here is exactly what we want: the user was
+		// disabled / signed out globally / their Cognito refresh token was
+		// revoked. Do not resurrect the session.
+		log.Printf("tokenRefresh: cognito refresh rejected for %s (revoked/disabled/expired): %v", rt.UserEmail, cerr)
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "session is no longer valid; re-authenticate")
+		return
+	}
+
+	sub := claims.Sub
+	if sub == "" {
+		sub = rt.UserSubject
+	}
+	email := claims.Email
+	if email == "" {
+		email = rt.UserEmail
+	}
+
+	// Re-resolve org memberships so grants/revocations at the org level
+	// take effect on refresh. Fall back to the last-known set on a
+	// transient DocumentDB error rather than dropping a live user.
+	orgIDs, oerr := resolveUserOrgs(r.Context(), sub, email)
+	if oerr != nil {
+		log.Printf("tokenRefresh: resolveUserOrgs failed for %s; using last-known %d orgs: %v", email, len(rt.OrganizationIDs), oerr)
+		orgIDs = rt.OrganizationIDs
+	}
+
+	accessToken := randomHex(20)
+	if perr := persistMCPSession(r.Context(), accessToken, sub, email, orgIDs, accessTokenTTL); perr != nil {
+		// Best-effort, same as the code grant: return the token anyway;
+		// the downstream 401 (if any) is the actionable surface.
+		log.Printf("tokenRefresh: persistMCPSession failed for %s: %v", email, perr)
+	} else {
+		log.Printf("tokenRefresh: refreshed session for %s (%d orgs)", email, len(orgIDs))
+	}
+
+	resp := map[string]any{
+		"access_token": accessToken,
+		"token_type":   "Bearer",
+		"expires_in":   int(accessTokenTTL.Seconds()),
+		"scope":        rt.Scope,
+	}
+
+	// Rotate: mint a new refresh token carrying the SAME upstream Cognito
+	// ciphertext (Cognito does not rotate its refresh token on use) and
+	// the SAME absolute expiry (the 30-day window is measured from the
+	// original login and does not extend). If we can't persist it the
+	// client keeps a working access token but loses silent refresh — a
+	// graceful, rare degradation, never worse than pre-feature behavior.
+	newRefresh := randomHex(32)
+	if perr := s.store.PutRefresh(r.Context(), &refreshToken{
+		HashedToken:       hashTokenB64(newRefresh),
+		ClientID:          rt.ClientID,
+		Scope:             rt.Scope,
+		UserSubject:       sub,
+		UserEmail:         email,
+		OrganizationIDs:   orgIDs,
+		CognitoRefreshEnc: rt.CognitoRefreshEnc,
+		Expires:           rt.Expires,
+	}); perr != nil {
+		log.Printf("tokenRefresh: PutRefresh(rotated) failed for %s: %v (no refresh_token returned)", email, perr)
+	} else {
+		resp["refresh_token"] = newRefresh
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // metadata returns the RFC 8414 / RFC 7591 discovery document. MCP
@@ -457,7 +671,7 @@ func (s *oauthServer) metadata(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint":                        s.issuer + "/oauth/token",
 		"registration_endpoint":                 s.issuer + "/oauth/register",
 		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
 		"scopes_supported":                      []string{defaultScope},
@@ -486,21 +700,76 @@ type cognitoIDClaims struct {
 	Email string `json:"email"`
 }
 
-// exchangeCognitoCode posts to Cognito's /oauth2/token endpoint with
-// the code+grant_type=authorization_code and returns the parsed `sub`
-// and `email` claims from the returned id_token.
+// exchangeCognitoCode posts to Cognito's /oauth2/token endpoint with the
+// code+grant_type=authorization_code and returns the parsed `sub`/`email`
+// claims from the returned id_token AND the returned refresh_token.
 //
-// We do NOT validate the id_token signature here; we trust that the
-// TLS connection to Cognito + the freshly-minted code-exchange
-// authenticates this leg. For a hardened deploy, swap to a JWKS-based
-// verification against Cognito's published JWKS endpoint.
-func (s *oauthServer) exchangeCognitoCode(_ /* ctx */ interface{}, code string) (*cognitoIDClaims, error) {
+// Cognito returns a refresh_token on the authorization_code grant for any
+// app client with refresh enabled (mcp_client's refresh_token_validity is
+// 30 days) — no `offline_access` scope is required, unlike generic OIDC.
+//
+// We do NOT validate the id_token signature here; we trust that the TLS
+// connection to Cognito + the freshly-minted code-exchange authenticates
+// this leg. For a hardened deploy, swap to a JWKS-based verification
+// against Cognito's published JWKS endpoint.
+func (s *oauthServer) exchangeCognitoCode(_ /* ctx */ interface{}, code string) (*cognitoIDClaims, string, error) {
 	form := url.Values{
 		"grant_type":   {"authorization_code"},
 		"client_id":    {s.cognitoClientID},
 		"code":         {code},
 		"redirect_uri": {s.issuer + defaultRedirectPath},
 	}
+	body, err := s.postCognitoToken(form)
+	if err != nil {
+		return nil, "", err
+	}
+	if body.IDToken == "" {
+		return nil, "", errors.New("cognito returned no id_token")
+	}
+	claims, err := parseIDTokenClaims(body.IDToken)
+	if err != nil {
+		return nil, "", err
+	}
+	return claims, body.RefreshToken, nil
+}
+
+// refreshCognito posts grant_type=refresh_token to Cognito's /oauth2/token
+// endpoint using the stored upstream refresh token and returns the parsed
+// claims from the freshly-minted id_token. A non-200 here is the
+// revocation signal (disabled user, global sign-out, expired/rotated
+// refresh token) — the caller turns it into invalid_grant.
+//
+// Note: Cognito does NOT return a new refresh_token on this grant, so the
+// caller keeps reusing the stored one (its 30-day window is fixed from the
+// original login and does not roll forward).
+func (s *oauthServer) refreshCognito(_ /* ctx */ interface{}, refreshToken string) (*cognitoIDClaims, error) {
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {s.cognitoClientID},
+		"refresh_token": {refreshToken},
+	}
+	body, err := s.postCognitoToken(form)
+	if err != nil {
+		return nil, err
+	}
+	if body.IDToken == "" {
+		return nil, errors.New("cognito refresh returned no id_token")
+	}
+	return parseIDTokenClaims(body.IDToken)
+}
+
+// cognitoTokenResponse is the subset of Cognito's /oauth2/token response
+// we consume. access_token is intentionally ignored — we mint our own
+// mcpSession token instead.
+type cognitoTokenResponse struct {
+	IDToken      string `json:"id_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+// postCognitoToken POSTs a form to Cognito's /oauth2/token endpoint with
+// the confidential-client Basic auth (when a secret is configured) and
+// decodes the response. Shared by the code-exchange and refresh grants.
+func (s *oauthServer) postCognitoToken(form url.Values) (*cognitoTokenResponse, error) {
 	req, err := http.NewRequest("POST", s.cognitoDomain+"/oauth2/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
@@ -520,19 +789,18 @@ func (s *oauthServer) exchangeCognitoCode(_ /* ctx */ interface{}, code string) 
 		return nil, fmt.Errorf("cognito returned status %d", resp.StatusCode)
 	}
 
-	var body struct {
-		IDToken string `json:"id_token"`
-	}
+	var body cognitoTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, err
 	}
-	if body.IDToken == "" {
-		return nil, errors.New("cognito returned no id_token")
-	}
+	return &body, nil
+}
 
-	// Decode the middle segment of the JWT — claims. We're not
-	// verifying the signature; see the doc above for why.
-	parts := strings.Split(body.IDToken, ".")
+// parseIDTokenClaims decodes the claims segment of a Cognito id_token
+// (JWT). It does NOT verify the signature — see exchangeCognitoCode for
+// the trust rationale.
+func parseIDTokenClaims(idToken string) (*cognitoIDClaims, error) {
+	parts := strings.Split(idToken, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("id_token is not a JWT")
 	}
@@ -572,6 +840,16 @@ func subtleConstantTimeEq(a, b string) bool {
 		diff |= a[i] ^ b[i]
 	}
 	return diff == 0
+}
+
+// hashTokenB64 returns base64(sha256(token)) — the SAME scheme
+// platform-api's auth middleware uses to look up mcpSessions
+// (hashTokenB64 in platform-api/internal/middleware/auth.go) and the
+// scheme we use to key refresh tokens in the Store. Standard base64
+// (with padding), NOT url-safe.
+func hashTokenB64(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func randomHex(n int) string {

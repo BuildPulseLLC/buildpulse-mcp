@@ -170,7 +170,7 @@ func main() {
 	// Store: DynamoDB when the three OAUTH_* table names are set,
 	// in-memory otherwise. See store.go for the design.
 	store := buildOAuthStore(context.Background())
-	oauth := newOAuthServer(store)
+	oauth := newOAuthServer(store, buildCrypter(context.Background()))
 	mux.HandleFunc("GET "+wellKnownOAuth, oauth.metadata)
 	mux.HandleFunc("POST /oauth/register", oauth.register)
 	mux.HandleFunc("GET /oauth/authorize", oauth.authorize)

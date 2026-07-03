@@ -16,6 +16,7 @@ type memoryStore struct {
 	clients sync.Map // clientID -> *registeredClient
 	codes   sync.Map // code -> *authorizationCode
 	pending sync.Map // state -> *pendingAuth
+	refresh sync.Map // hashedToken -> *refreshToken
 }
 
 func newMemoryStore() *memoryStore { return &memoryStore{} }
@@ -57,4 +58,17 @@ func (m *memoryStore) PopPending(_ context.Context, state string) (*pendingAuth,
 		return nil, ErrNotFound
 	}
 	return v.(*pendingAuth), nil
+}
+
+func (m *memoryStore) PutRefresh(_ context.Context, rt *refreshToken) error {
+	m.refresh.Store(rt.HashedToken, rt)
+	return nil
+}
+
+func (m *memoryStore) PopRefresh(_ context.Context, hashedToken string) (*refreshToken, error) {
+	v, ok := m.refresh.LoadAndDelete(hashedToken)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return v.(*refreshToken), nil
 }

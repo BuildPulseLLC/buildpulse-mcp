@@ -22,12 +22,20 @@ const (
 	envOAuthClientsTable = "OAUTH_CLIENTS_TABLE"
 	envOAuthCodesTable   = "OAUTH_CODES_TABLE"
 	envOAuthPendingTable = "OAUTH_PENDING_TABLE"
+	envOAuthRefreshTable = "OAUTH_REFRESH_TABLE"
 )
 
 func buildOAuthStore(ctx context.Context) Store {
 	clients := os.Getenv(envOAuthClientsTable)
 	codes := os.Getenv(envOAuthCodesTable)
 	pending := os.Getenv(envOAuthPendingTable)
+	// The refresh table is intentionally NOT part of the gate below:
+	// keeping it optional means the code can deploy before (or after) the
+	// environment PR that provisions the table without flipping the whole
+	// OAuth store back to in-memory. When it's empty the DynamoDB store's
+	// Put/PopRefresh degrade to "no refresh token" — the code grant still
+	// mints working 1h access tokens.
+	refresh := os.Getenv(envOAuthRefreshTable)
 
 	if clients == "" || codes == "" || pending == "" {
 		log.Printf("OAuth store: using in-memory (set OAUTH_CLIENTS_TABLE/OAUTH_CODES_TABLE/OAUTH_PENDING_TABLE for DynamoDB)")
@@ -40,6 +48,6 @@ func buildOAuthStore(ctx context.Context) Store {
 		return newMemoryStore()
 	}
 	ddb := dynamodb.NewFromConfig(cfg)
-	log.Printf("OAuth store: using DynamoDB (clients=%s, codes=%s, pending=%s)", clients, codes, pending)
-	return newDynamoStore(ddb, clients, codes, pending)
+	log.Printf("OAuth store: using DynamoDB (clients=%s, codes=%s, pending=%s, refresh=%q)", clients, codes, pending, refresh)
+	return newDynamoStore(ddb, clients, codes, pending, refresh)
 }

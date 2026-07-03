@@ -80,7 +80,11 @@ resource "aws_ecs_task_definition" "definition" {
   memory                   = 512
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  task_role_arn            = data.terraform_remote_state.environment.outputs.iam.ecs_task_execution_role_arn
+  # Runtime identity exposed to the container. Scoped least-privilege role
+  # (DynamoDB on the MCP OAuth tables + Encrypt/Decrypt on the refresh CMK
+  # only) — NOT the shared *:* execution role, which stays as
+  # execution_role_arn for image pull + secret injection + logs.
+  task_role_arn = data.terraform_remote_state.environment.outputs.iam.mcp_remote_task_role_arn
   container_definitions = jsonencode([
     {
       essential         = true

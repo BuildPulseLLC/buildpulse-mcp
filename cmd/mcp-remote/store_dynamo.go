@@ -41,15 +41,16 @@ type dynamoClientItem struct {
 }
 
 type dynamoCodeItem struct {
-	Code            string   `dynamodbav:"code"`
-	ClientID        string   `dynamodbav:"client_id"`
-	RedirectURI     string   `dynamodbav:"redirect_uri"`
-	CodeChallenge   string   `dynamodbav:"code_challenge"`
-	Scope           string   `dynamodbav:"scope"`
-	UserSubject     string   `dynamodbav:"user_subject"`
-	UserEmail       string   `dynamodbav:"user_email"`
-	OrganizationIDs []string `dynamodbav:"organization_ids,omitempty"`
-	ExpiresUnix     int64    `dynamodbav:"expires_unix"`
+	Code              string   `dynamodbav:"code"`
+	ClientID          string   `dynamodbav:"client_id"`
+	RedirectURI       string   `dynamodbav:"redirect_uri"`
+	CodeChallenge     string   `dynamodbav:"code_challenge"`
+	Scope             string   `dynamodbav:"scope"`
+	UserSubject       string   `dynamodbav:"user_subject"`
+	UserEmail         string   `dynamodbav:"user_email"`
+	OrganizationIDs   []string `dynamodbav:"organization_ids,omitempty"`
+	CognitoRefreshEnc string   `dynamodbav:"cognito_refresh_enc,omitempty"`
+	ExpiresUnix       int64    `dynamodbav:"expires_unix"`
 }
 
 type dynamoPendingItem struct {
@@ -145,15 +146,16 @@ func (d *dynamoStore) GetClient(ctx context.Context, clientID string) (*register
 
 func (d *dynamoStore) PutCode(ctx context.Context, c *authorizationCode) error {
 	item, err := attributevalue.MarshalMap(dynamoCodeItem{
-		Code:            c.Code,
-		ClientID:        c.ClientID,
-		RedirectURI:     c.RedirectURI,
-		CodeChallenge:   c.CodeChallenge,
-		Scope:           c.Scope,
-		UserSubject:     c.UserSubject,
-		UserEmail:       c.UserEmail,
-		OrganizationIDs: c.OrganizationIDs,
-		ExpiresUnix:     c.Expires.Unix(),
+		Code:              c.Code,
+		ClientID:          c.ClientID,
+		RedirectURI:       c.RedirectURI,
+		CodeChallenge:     c.CodeChallenge,
+		Scope:             c.Scope,
+		UserSubject:       c.UserSubject,
+		UserEmail:         c.UserEmail,
+		OrganizationIDs:   c.OrganizationIDs,
+		CognitoRefreshEnc: c.CognitoRefreshEnc,
+		ExpiresUnix:       c.Expires.Unix(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal code: %w", err)
@@ -184,15 +186,16 @@ func (d *dynamoStore) PopCode(ctx context.Context, code string) (*authorizationC
 		return nil, fmt.Errorf("unmarshal code: %w", err)
 	}
 	return &authorizationCode{
-		Code:            raw.Code,
-		ClientID:        raw.ClientID,
-		RedirectURI:     raw.RedirectURI,
-		CodeChallenge:   raw.CodeChallenge,
-		Scope:           raw.Scope,
-		UserSubject:     raw.UserSubject,
-		UserEmail:       raw.UserEmail,
-		OrganizationIDs: raw.OrganizationIDs,
-		Expires:         unixToTime(raw.ExpiresUnix),
+		Code:              raw.Code,
+		ClientID:          raw.ClientID,
+		RedirectURI:       raw.RedirectURI,
+		CodeChallenge:     raw.CodeChallenge,
+		Scope:             raw.Scope,
+		UserSubject:       raw.UserSubject,
+		UserEmail:         raw.UserEmail,
+		OrganizationIDs:   raw.OrganizationIDs,
+		CognitoRefreshEnc: raw.CognitoRefreshEnc,
+		Expires:           unixToTime(raw.ExpiresUnix),
 	}, nil
 }
 

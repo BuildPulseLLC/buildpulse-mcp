@@ -78,11 +78,16 @@ func TestNewClientNormalizesURL(t *testing.T) {
 
 func TestWebURL(t *testing.T) {
 	c := NewClient("https://platform.buildpulse.io", "abc")
-	if got, want := c.WebURL("/repos/acme/widgets"), "https://app.buildpulse.io/repos/acme/widgets"; got != want {
+	if got, want := c.WebURL("/repos/acme/widgets"), "https://buildpulse.io/repos/acme/widgets"; got != want {
 		t.Errorf("WebURL = %q, want %q", got, want)
 	}
 	c2 := NewClient("https://platform.dev.buildpulse.io", "abc")
-	if got, want := c2.WebURL("/repos/x/y"), "https://app.dev.buildpulse.io/repos/x/y"; got != want {
+	if got, want := c2.WebURL("/repos/x/y"), "https://dev.buildpulse.io/repos/x/y"; got != want {
+		t.Errorf("WebURL = %q, want %q", got, want)
+	}
+	// A custom host without a "platform." label falls through unchanged.
+	c3 := NewClient("https://example.com", "abc")
+	if got, want := c3.WebURL("/repos/x/y"), "https://example.com/repos/x/y"; got != want {
 		t.Errorf("WebURL = %q, want %q", got, want)
 	}
 }

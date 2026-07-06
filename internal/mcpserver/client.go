@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -123,19 +124,24 @@ func NewClient(baseURL, token string) *Client {
 func (c *Client) BaseURL() string { return c.baseURL }
 
 // WebURL returns a best-effort link into the BuildPulse web UI for a
-// repository. We map platform.* → app.* — both share the same root
-// domain. Used by tool outputs to give the model a deep-link to send
+// given path. It derives the web host from the platform API host by
+// dropping the leading "platform." label, so it tracks whatever
+// PLATFORM_API_URL points at:
+//
+//	https://platform.buildpulse.io      -> https://buildpulse.io
+//	https://platform.dev.buildpulse.io  -> https://dev.buildpulse.io
+//
+// Previously this mapped platform.* -> app.*, but app.buildpulse.io is
+// the legacy Rails app being retired — it never served these new-app
+// routes (/repos/<uuid>, /flaky-tests, ...). The new web app is served
+// at the apex (prod) / dev host, which is also the app2.* deprecation
+// target. Used by tool outputs to give the model a deep-link to send
 // back to the user.
 func (c *Client) WebURL(path string) string {
-	web := c.baseURL
-	// Replace the first "platform." with "app." — most environments
-	// (production, dev) follow this naming.
-	for i := 0; i < len(web)-len("platform."); i++ {
-		if web[i:i+len("platform.")] == "platform." {
-			web = web[:i] + "app." + web[i+len("platform."):]
-			break
-		}
-	}
+	// Strip the "platform." label immediately after the scheme so a
+	// "platform." appearing elsewhere is left alone. No match (a custom
+	// host) falls through unchanged — still best-effort.
+	web := strings.Replace(c.baseURL, "://platform.", "://", 1)
 	return web + path
 }
 

@@ -29,7 +29,7 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: bp-ubuntu-latest-x64-2x
     environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     steps:
       - name: Checkout code
@@ -65,7 +65,7 @@ jobs:
           docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ENVIRONMENT }}-${{ env.NAME }}:latest
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: bp-ubuntu-latest-x64-2x
     needs: build-and-push
     environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     env:

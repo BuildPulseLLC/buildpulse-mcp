@@ -140,7 +140,7 @@ resource "aws_ecs_task_definition" "definition" {
         logDriver = "awslogs"
         options = {
           "awslogs-group"         = "/aws/ecs/${var.environment}"
-          "awslogs-region"        = data.aws_region.current.name
+          "awslogs-region"        = data.aws_region.current.region
           "awslogs-stream-prefix" = var.name
         }
       }

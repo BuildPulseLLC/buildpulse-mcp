@@ -50,7 +50,7 @@ jobs:
             goarch: amd64
             ext: ".exe"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v5
         with:
@@ -79,7 +79,7 @@ jobs:
     needs: build-binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v4
         with:
@@ -97,7 +97,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check for NPM_TOKEN
         id: token
@@ -151,7 +151,7 @@ jobs:
       id-token: write   # github-oidc auth into the MCP Registry
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Wait for npm propagation
         # `npm publish` returns before the new version is globally

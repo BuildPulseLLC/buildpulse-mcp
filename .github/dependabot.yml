@@ -1,0 +1,82 @@
+# Dependabot — SOC 2 vulnerability monitoring (CFG-01)
+# Tuned to match tpz/TPZ/.github/dependabot.yml: weekly Monday batches, grouped minor/patch PRs.
+# Grouped weekly updates for SOC 2 vulnerability monitoring (CFG-01).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/npm"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      npm-npm:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "eslint"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@eslint/js"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "typescript"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: terraform
+    directory: "/.infra"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    groups:
+      infra-terraform:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: "/cmd/mcp-remote"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    groups:
+      cmd-mcp-remote-docker:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "node"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    groups:
+      root-github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

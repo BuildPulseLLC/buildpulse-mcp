@@ -61,6 +61,11 @@ func flakyTestsResource(c *Client) mcp.ResourceHandler {
 		params.Set("repository", repo)
 		params.Set("include", "disruptiveness_ratio,tags,nondeterminism_first_recorded_at")
 		params.Set("limit", "50")
+		// This resource is "the repo's flaky tests", i.e. the ACTIVE ones.
+		// /api/v1/flaky/tests defaults to quarantined-only (legacy Rails
+		// parity), so the param must be explicit — omitting it would silently
+		// turn this resource into a quarantine roster.
+		params.Set("quarantine", "false")
 		body, _, err := c.Get(ctx, "/api/v1/flaky/tests", params)
 		if err != nil {
 			return nil, err

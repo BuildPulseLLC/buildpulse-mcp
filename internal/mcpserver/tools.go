@@ -239,7 +239,11 @@ type findFlakyInput struct {
 	Search             string   `json:"search,omitempty" jsonschema:"optional free-text match on test name, suite, file, or classname"`
 	SinceDate          string   `json:"since,omitempty" jsonschema:"only return tests last seen on or after this YYYY-MM-DD"`
 	Sort               string   `json:"sort,omitempty" jsonschema:"'disruptivenessRatio' (default) or 'recency'"`
-	IncludeQuarantined bool     `json:"include_quarantined,omitempty" jsonschema:"include tests under quarantine (default false)"`
+	// Renamed from include_quarantined. platform-api's /api/v1/flaky/tests now
+	// exposes two MUTUALLY EXCLUSIVE views (quarantined XOR not), matching the
+	// legacy Rails API — "include both in one response" is no longer a thing the
+	// endpoint can express, so "include_" was actively misleading.
+	Quarantined bool `json:"quarantined,omitempty" jsonschema:"return QUARANTINED tests instead of active flaky ones. These are exclusive: false (default) lists tests currently flaking and not quarantined; true lists the quarantine roster. There is no combined view."`
 	Limit              int      `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 25)"`
 }
 
@@ -284,9 +288,11 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 		if in.Sort == "recency" {
 			params.Set("sort", "recency")
 		}
-		if in.IncludeQuarantined {
-			params.Set("quarantine", "true")
-		}
+		// ALWAYS send the param — never rely on the endpoint default. That
+		// default is `true` (quarantined-only) for legacy Rails parity, so
+		// omitting it would make `find_flaky_tests` return the quarantine
+		// roster instead of the active flakes callers are asking for.
+		params.Set("quarantine", strconv.FormatBool(in.Quarantined))
 
 		var qParts []string
 		if in.SinceDate != "" {

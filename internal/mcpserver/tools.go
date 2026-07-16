@@ -428,7 +428,7 @@ type submission struct {
 	CommitOID       string `json:"commit_oid"`
 	RecordedAt      string `json:"recorded_at"`
 	Status          string `json:"status"`
-	TestResultCount int    `json:"test_result_count"`
+	TestResultCount int    `json:"test_result_count" jsonschema:"number of recorded test result attempts in this submission — retries and skipped tests included so this can exceed the number of distinct tests"`
 }
 
 type submissionsOutput struct {

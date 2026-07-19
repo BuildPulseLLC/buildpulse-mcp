@@ -149,6 +149,53 @@ func addOrgParam(params url.Values, orgID string) {
 	}
 }
 
+// resolveOrgID decides which organization a repository-scoped tool call
+// should target, given the caller's (possibly empty) organization_id.
+//
+//   - If organization_id is supplied, it's used verbatim — the caller has
+//     already chosen, and platform-api validates it against the session.
+//   - If omitted, we ask platform-api how many organizations this session can
+//     access. With 0 or 1 orgs we return "" and let platform-api auto-scope to
+//     the sole org — single-tenant behavior is completely unchanged.
+//   - With 2+ orgs we refuse to guess. platform-api would otherwise silently
+//     default to the FIRST org in membership order (see auth.go
+//     resolveMCPSessionByHash), which is frequently an org with no data and
+//     yields confusingly empty results. Instead we return an error that names
+//     every accessible org so the model can immediately re-issue the call with
+//     an explicit organization_id — the same UUID list_my_organizations
+//     returns.
+//
+// The extra /api/me/organizations lookup only happens when organization_id is
+// omitted; a caller that already passes one pays nothing.
+func resolveOrgID(ctx context.Context, c *Client, orgID string) (string, error) {
+	if s := strings.TrimSpace(orgID); s != "" {
+		return s, nil
+	}
+	var resp struct {
+		Organizations []orgOut `json:"organizations"`
+	}
+	if err := c.GetJSON(ctx, "/api/me/organizations", nil, &resp); err != nil {
+		return "", err
+	}
+	if len(resp.Organizations) <= 1 {
+		// 0 orgs: nothing we can do here — let the real call surface the
+		// upstream error. 1 org: platform-api auto-scopes correctly.
+		return "", nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "This BuildPulse session can access %d organizations, so a repository-scoped call must specify which one to use. "+
+		"Pass the `organization_id` argument (the `id` from list_my_organizations) set to one of:", len(resp.Organizations))
+	for _, o := range resp.Organizations {
+		b.WriteString("\n- ")
+		b.WriteString(o.Name)
+		if o.Slug != "" {
+			fmt.Fprintf(&b, " (%s)", o.Slug)
+		}
+		fmt.Fprintf(&b, ": %s", o.ID)
+	}
+	return "", errors.New(b.String())
+}
+
 // --- list_my_organizations --------------------------------------------------
 
 type listOrgsInput struct{}
@@ -199,8 +246,12 @@ type listReposOutput struct {
 
 func listRepositories(c *Client) mcp.ToolHandlerFor[listReposInput, listReposOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in listReposInput) (*mcp.CallToolResult, listReposOutput, error) {
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, listReposOutput{}, err
+		}
 		params := url.Values{}
-		addOrgParam(params, in.OrganizationID)
+		addOrgParam(params, orgID)
 
 		var resp struct {
 			Repositories []struct {
@@ -276,11 +327,15 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 		if strings.TrimSpace(in.Repository) == "" {
 			return nil, findFlakyOutput{}, fmt.Errorf("repository is required")
 		}
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, findFlakyOutput{}, err
+		}
 
 		params := url.Values{}
 		params.Set("repository", in.Repository)
 		params.Set("include", "disruptiveness_ratio,nondeterministic_negative_result_count,nondeterminism_first_recorded_at,tags,time_consumed,pass_rate,avg_duration_ms")
-		addOrgParam(params, in.OrganizationID)
+		addOrgParam(params, orgID)
 
 		if in.Limit > 0 && in.Limit <= 100 {
 			params.Set("limit", strconv.Itoa(in.Limit))
@@ -393,13 +448,17 @@ func getTestHistory(c *Client) mcp.ToolHandlerFor[testHistoryInput, testHistoryO
 		if len(in.TestID) != 24 {
 			return nil, testHistoryOutput{}, fmt.Errorf("test_id must be a 24-char hex string, got %d chars", len(in.TestID))
 		}
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, testHistoryOutput{}, err
+		}
 
 		type resp struct {
 			Results []disruptionEvent `json:"results"`
 		}
 		var r resp
 		params := url.Values{}
-		addOrgParam(params, in.OrganizationID)
+		addOrgParam(params, orgID)
 		if err := c.GetJSON(ctx, "/api/tests/"+url.PathEscape(in.TestID)+"/results", params, &r); err != nil {
 			return nil, testHistoryOutput{}, err
 		}
@@ -445,12 +504,16 @@ func listRecentSubmissions(c *Client) mcp.ToolHandlerFor[submissionsInput, submi
 		if strings.TrimSpace(in.Owner) == "" || strings.TrimSpace(in.Name) == "" {
 			return nil, submissionsOutput{}, fmt.Errorf("owner and name are required")
 		}
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, submissionsOutput{}, err
+		}
 
 		params := url.Values{}
 		if in.Limit > 0 && in.Limit <= 100 {
 			params.Set("limit", strconv.Itoa(in.Limit))
 		}
-		addOrgParam(params, in.OrganizationID)
+		addOrgParam(params, orgID)
 
 		type resp struct {
 			Count       int64        `json:"count"`
@@ -523,6 +586,10 @@ func getSubmissionTestResults(c *Client) mcp.ToolHandlerFor[submissionTestResult
 		if len(subID) != 24 {
 			return nil, submissionTestResultsOutput{}, fmt.Errorf("submission_id must be a 24-char hex string, got %d chars", len(subID))
 		}
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, submissionTestResultsOutput{}, err
+		}
 
 		params := url.Values{}
 		if in.Status != "" {
@@ -531,7 +598,7 @@ func getSubmissionTestResults(c *Client) mcp.ToolHandlerFor[submissionTestResult
 		if in.Limit > 0 && in.Limit <= 100 {
 			params.Set("limit", strconv.Itoa(in.Limit))
 		}
-		addOrgParam(params, in.OrganizationID)
+		addOrgParam(params, orgID)
 
 		type resp struct {
 			Count    int64                     `json:"count"`
@@ -603,11 +670,15 @@ func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recent
 		if in.Submissions > 0 && in.Submissions <= 50 {
 			limit = in.Submissions
 		}
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, recentFailuresOutput{}, err
+		}
 
 		// Step 1: list recent submissions to get the IDs to drill into.
 		subParams := url.Values{}
 		subParams.Set("limit", strconv.Itoa(limit))
-		addOrgParam(subParams, in.OrganizationID)
+		addOrgParam(subParams, orgID)
 
 		type submissionLite struct {
 			ID       string `json:"id"`
@@ -651,7 +722,7 @@ func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recent
 			stParams := url.Values{}
 			stParams.Set("status", "failed")
 			stParams.Set("limit", "100")
-			addOrgParam(stParams, in.OrganizationID)
+			addOrgParam(stParams, orgID)
 
 			var r stResp
 			stPath := fmt.Sprintf("/api/repos/%s/%s/submissions/%s/tests",
@@ -748,10 +819,14 @@ func getRepoFlakiness(c *Client) mcp.ToolHandlerFor[repoMetricInput, flakinessOu
 		if strings.TrimSpace(in.Repository) == "" {
 			return nil, flakinessOutput{}, fmt.Errorf("repository is required")
 		}
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, flakinessOutput{}, err
+		}
 
 		params := url.Values{}
 		params.Set("repository", in.Repository)
-		addOrgParam(params, in.OrganizationID)
+		addOrgParam(params, orgID)
 		body, _, err := c.Get(ctx, "/api/v1/flaky/badges", params)
 		if err != nil {
 			return nil, flakinessOutput{}, err
@@ -782,10 +857,14 @@ func getRepoCoverage(c *Client) mcp.ToolHandlerFor[repoMetricInput, coverageOutp
 		if strings.TrimSpace(in.Repository) == "" {
 			return nil, coverageOutput{}, fmt.Errorf("repository is required")
 		}
+		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
+		if err != nil {
+			return nil, coverageOutput{}, err
+		}
 
 		params := url.Values{}
 		params.Set("repository", in.Repository)
-		addOrgParam(params, in.OrganizationID)
+		addOrgParam(params, orgID)
 		body, _, err := c.Get(ctx, "/api/v1/coverage/badges", params)
 		if err != nil {
 			return nil, coverageOutput{}, err

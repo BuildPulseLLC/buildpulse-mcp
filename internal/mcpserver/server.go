@@ -29,7 +29,7 @@ func New(client *Client) *mcp.Server {
 			"- \"Why is my CI red?\"  → list_recent_submissions, then get_test_history on any failing test.\n" +
 			"- \"Triage flaky tests.\"  → find_flaky_tests (sort=recency), then for each interesting test, get_test_history.\n" +
 			"- \"Repo health snapshot.\"  → get_repo_flakiness and get_repo_coverage.\n\n" +
-			"For multi-tenant users (list_my_organizations returns 2+ orgs), pass organization_id on every subsequent call.\n\n" +
+			"Organizations: multi-tenant users (list_my_organizations returns 2+ orgs) MUST pass organization_id (the org's `id` UUID) on EVERY repo-scoped call. The org is NOT auto-selected: if you omit organization_id when the session has 2+ orgs, the call returns an error listing the accessible orgs and their UUIDs — read it, pick the right org, and retry with organization_id set. Single-tenant users (exactly one org) can omit organization_id; it auto-defaults to their one org.\n\n" +
 			"Every tool output that names a test or repository includes a " +
 			"`web_url` field — surface it back to the user as a clickable link.",
 	})

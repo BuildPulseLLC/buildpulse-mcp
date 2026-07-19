@@ -58,15 +58,44 @@ Cline, Continue, Windsurf, Zed, and VS Code Copilot all read an
 [install hub](https://platform.buildpulse.io/docs/mcp) for copy-paste
 snippets per client.
 
+## Organizations (multi-tenant)
+
+Your BuildPulse token may grant access to more than one organization.
+Every repo-scoped tool takes an optional `organization_id` argument (the
+org's `id` UUID, discoverable via `list_my_organizations`):
+
+- **Single-org tokens** — omit `organization_id`. It auto-defaults to your
+  one organization. Nothing changes; you never need to think about orgs.
+- **Multi-org sessions** (`list_my_organizations` returns 2+ orgs) — you
+  **must** pass `organization_id` on every repo-scoped call
+  (`list_repositories`, `find_flaky_tests`, `get_test_history`,
+  `list_recent_submissions`, `get_submission_test_results`,
+  `get_recent_failures`, `get_repo_flakiness`, `get_repo_coverage`). The
+  org is **not** auto-selected — omitting it returns an error that lists
+  every accessible organization and its UUID, so the agent can pick the
+  right one and retry. Call `list_my_organizations` first to enumerate
+  them.
+
+This avoids silently querying the wrong (often empty) organization and
+getting confusingly empty results.
+
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
+| `list_my_organizations` | Enumerate the organizations this token can access; get the `id` (UUID) to pass as `organization_id`. |
+| `list_repositories` | List repositories in an organization. |
 | `find_flaky_tests` | Search a repository's flaky test inventory; filter by tags, recency, free-text. |
 | `get_test_history` | Recent disruption events for a specific test. |
-| `list_recent_submissions` | Recent CI runs for a repository. |
+| `list_recent_submissions` | Recent test-result submissions (CI runs) for a repository. |
+| `get_submission_test_results` | Per-test results for one submission (one CI run). |
+| `get_recent_failures` | Tests that failed across the most recent submissions, aggregated by test identity. |
 | `get_repo_flakiness` | Current flakiness % over the last 14 days. |
 | `get_repo_coverage` | Current coverage % from the latest report. |
+
+Repo-scoped tools accept an `organization_id` argument — required for
+multi-org sessions, optional (auto-defaulted) for single-org tokens. See
+[Organizations](#organizations-multi-tenant) above.
 
 Every output that names a test or repo includes a `web_url` deep-link
 back to the BuildPulse web app — the same polish Sentry / Atlassian

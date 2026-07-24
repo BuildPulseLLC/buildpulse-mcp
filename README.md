@@ -168,4 +168,4 @@ MIT — see [LICENSE](./LICENSE).
 ## CI / Dependabot
 
 - Push to `main` / `feat/**` / `fix/**` runs build-and-push + deploy (production vs development by branch).
-- Dependabot opens weekly grouped update PRs. This repo is on the **Dependabot weekly rollup** pilot allowlist in `BuildPulseLLC/agents` (`dependabot-rollup` workflow / DEV-85): open Dependabot PRs are folded onto `feat/deps-dependabot-batch-*` so development CI runs before any merge to `main`. See `agents/scripts/dependabot-rollup.md`.
+- Dependabot opens weekly grouped update PRs. This repo is on the **Dependabot weekly rollup** allowlist in `BuildPulseLLC/agents` (`dependabot-rollup` workflow / DEV-85): open Dependabot PRs are folded onto `feat/deps-dependabot-batch-*` so development CI runs before any merge to `main`. See `agents/scripts/dependabot-rollup.md`.

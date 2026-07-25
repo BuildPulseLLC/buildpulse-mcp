@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -171,21 +172,21 @@ func resolveOrgID(ctx context.Context, c *Client, orgID string) (string, error) 
 	if s := strings.TrimSpace(orgID); s != "" {
 		return s, nil
 	}
-	var resp struct {
-		Organizations []orgOut `json:"organizations"`
-	}
-	if err := c.GetJSON(ctx, "/api/me/organizations", nil, &resp); err != nil {
+	// Memoized on the Client for orgsCacheTTL — this runs on every
+	// repo-scoped tool call that omits organization_id.
+	orgs, err := c.cachedOrganizations(ctx)
+	if err != nil {
 		return "", err
 	}
-	if len(resp.Organizations) <= 1 {
+	if len(orgs) <= 1 {
 		// 0 orgs: nothing we can do here — let the real call surface the
 		// upstream error. 1 org: platform-api auto-scopes correctly.
 		return "", nil
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "This BuildPulse session can access %d organizations, so a repository-scoped call must specify which one to use. "+
-		"Pass the `organization_id` argument (the `id` from list_my_organizations) set to one of:", len(resp.Organizations))
-	for _, o := range resp.Organizations {
+		"Pass the `organization_id` argument (the `id` from list_my_organizations) set to one of:", len(orgs))
+	for _, o := range orgs {
 		b.WriteString("\n- ")
 		b.WriteString(o.Name)
 		if o.Slug != "" {
@@ -715,34 +716,85 @@ func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recent
 			Tests []failedTest `json:"tests"`
 		}
 
-		seenInThisSubmission := map[string]map[testKey]bool{}
+		// Step 2a: fetch every submission's failed tests CONCURRENTLY.
+		//
+		// This used to be a serial loop: one HTTP round trip per submission,
+		// up to 50 of them, each costing platform-api roughly five DocumentDB
+		// operations (repo lookup, testResultSets FindOne, testResults count,
+		// testResults find with a blocking sort, testCases $in). At the
+		// maximum that is ~255 database operations strictly one after another,
+		// against a 30s client timeout.
+		//
+		// Concurrency is bounded rather than unlimited: this fans out into
+		// platform-api, which reads the same DocumentDB cluster that serves
+		// live ingestion. An unbounded fan-out of 50 would just move the
+		// bottleneck onto the database — the same mistake that saturated the
+		// writer on 2026-07-22/23.
+		const maxConcurrentFetches = 6
 
-		for _, s := range sr.Submissions {
-			seenInThisSubmission[s.ID] = map[testKey]bool{}
-			stParams := url.Values{}
-			stParams.Set("status", "failed")
-			stParams.Set("limit", "100")
-			addOrgParam(stParams, orgID)
+		type fetchResult struct {
+			tests []failedTest
+			ok    bool
+		}
+		// Indexed by submission position so the merge below can run in
+		// submission order regardless of completion order.
+		results := make([]fetchResult, len(sr.Submissions))
 
-			var r stResp
-			stPath := fmt.Sprintf("/api/repos/%s/%s/submissions/%s/tests",
-				url.PathEscape(in.Owner), url.PathEscape(in.Name), url.PathEscape(s.ID))
-			if err := c.GetJSON(ctx, stPath, stParams, &r); err != nil {
-				// best-effort: skip submissions that error so a flaky
-				// one doesn't sink the whole response
+		sem := make(chan struct{}, maxConcurrentFetches)
+		var wg sync.WaitGroup
+
+		for i, s := range sr.Submissions {
+			wg.Add(1)
+			go func(i int, s submissionLite) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				stParams := url.Values{}
+				stParams.Set("status", "failed")
+				stParams.Set("limit", "100")
+				addOrgParam(stParams, orgID)
+
+				var r stResp
+				stPath := fmt.Sprintf("/api/repos/%s/%s/submissions/%s/tests",
+					url.PathEscape(in.Owner), url.PathEscape(in.Name), url.PathEscape(s.ID))
+				if err := c.GetJSON(ctx, stPath, stParams, &r); err != nil {
+					// best-effort: skip submissions that error so a flaky
+					// one doesn't sink the whole response. results[i].ok
+					// stays false.
+					return
+				}
+				results[i] = fetchResult{tests: r.Tests, ok: true}
+			}(i, s)
+		}
+		wg.Wait()
+
+		// Step 2b: merge STRICTLY IN SUBMISSION ORDER.
+		//
+		// This ordering is load-bearing, not incidental. Submissions arrive
+		// newest-first and the "most_recent_*" fields are populated from the
+		// FIRST sighting of a testCaseId and never overwritten. Merging in
+		// completion order instead would silently attribute the wrong build
+		// URL, message and timestamp to every test that failed in more than
+		// one submission — a data-correctness bug that no test would catch
+		// because the shape stays valid. Hence: fetch in parallel, merge in
+		// series.
+		for i, s := range sr.Submissions {
+			if !results[i].ok {
 				continue
 			}
+			seenInThisSubmission := map[testKey]bool{}
 
-			for _, t := range r.Tests {
+			for _, t := range results[i].tests {
 				if t.TestCaseID == "" {
 					continue
 				}
 				// One submission, even with retries on the same test,
 				// counts as a single failure for the per-submission tally.
-				if seenInThisSubmission[s.ID][t.TestCaseID] {
+				if seenInThisSubmission[t.TestCaseID] {
 					continue
 				}
-				seenInThisSubmission[s.ID][t.TestCaseID] = true
+				seenInThisSubmission[t.TestCaseID] = true
 
 				row, ok := agg[t.TestCaseID]
 				if !ok {

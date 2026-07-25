@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -98,6 +99,52 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+
+	// Memoized /api/me/organizations response. resolveOrgID calls that
+	// endpoint on EVERY repo-scoped tool invocation that omits
+	// organization_id — the norm for single-org tokens — and on the
+	// platform-api side that route reads the writer and resolves each org
+	// with its own FindOne. A Client is per-session/per-token, so caching
+	// here is correctly scoped to one user's memberships.
+	//
+	// A short TTL rather than process-lifetime: org membership can change
+	// mid-session (an invite accepted in another tab), and re-checking once a
+	// minute is cheap compared with once per tool call.
+	orgsMu      sync.Mutex
+	orgsCache   []orgOut
+	orgsCached  bool
+	orgsExpires time.Time
+}
+
+// orgsCacheTTL bounds how stale a memoized organization roster may be.
+const orgsCacheTTL = 60 * time.Second
+
+// cachedOrganizations returns the caller's organizations, memoized for
+// orgsCacheTTL. Errors are never cached — a transient failure must not pin an
+// empty roster for a minute.
+func (c *Client) cachedOrganizations(ctx context.Context) ([]orgOut, error) {
+	c.orgsMu.Lock()
+	if c.orgsCached && time.Now().Before(c.orgsExpires) {
+		orgs := c.orgsCache
+		c.orgsMu.Unlock()
+		return orgs, nil
+	}
+	c.orgsMu.Unlock()
+
+	var resp struct {
+		Organizations []orgOut `json:"organizations"`
+	}
+	if err := c.GetJSON(ctx, "/api/me/organizations", nil, &resp); err != nil {
+		return nil, err
+	}
+
+	c.orgsMu.Lock()
+	c.orgsCache = resp.Organizations
+	c.orgsCached = true
+	c.orgsExpires = time.Now().Add(orgsCacheTTL)
+	c.orgsMu.Unlock()
+
+	return resp.Organizations, nil
 }
 
 // NewClient builds a Client.

@@ -1,4 +1,6 @@
-# BuildPulse MCP
+<a href="https://buildpulse.io"><img src=".github/banner.svg" alt="buildpulse-mcp, by BuildPulse" width="100%"></a>
+
+<a href="https://buildpulse.io/mcp?ref=github-badge"><img src=".github/runs-on-buildpulse-compact.svg" alt="Runs on BuildPulse" height="28"></a>
 
 > Model Context Protocol server for the [BuildPulse](https://buildpulse.io)
 > Platform API. Surface flaky tests, CI run history, and coverage health

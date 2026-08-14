@@ -142,8 +142,10 @@ state into context without a tool call:
 The **hosted** server (`mcp-remote`) will refuse to start unless
 `PLATFORM_API_URL` is production or development Platform API. Local stdio
 (`npx @buildpulse/mcp`) is unchanged. See [SECURITY.md](./SECURITY.md) for
-the threat model, tenant isolation, and what we deliberately do not gate
-(HITL on reads, hiding tools, killing multi-step triage).
+the threat model, tenant isolation, P1 rate limits (120 tool calls / token /
+minute), the tool audit log, RFC 7009 `/oauth/revoke`, and what we
+deliberately do not gate (HITL on reads, hiding tools, killing multi-step
+triage).
 
 ## Build from source
 

@@ -44,8 +44,13 @@ variable "priority" {
 
 variable "platform_api_url" {
   type        = string
-  description = "Base URL of the platform-api this MCP talks to (no trailing slash)."
+  description = "Base URL of the platform-api this MCP talks to (no trailing slash). Empty uses the env default. Hosted MCP may only call platform.buildpulse.io / platform.dev.buildpulse.io."
   default     = ""
+
+  validation {
+    condition     = var.platform_api_url == "" || can(regex("^https://platform(\\.dev)?\\.buildpulse\\.io/?$", var.platform_api_url))
+    error_message = "platform_api_url must be empty (use the environment default) or https://platform.buildpulse.io / https://platform.dev.buildpulse.io."
+  }
 }
 
 variable "mongodb_uri" {

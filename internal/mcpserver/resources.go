@@ -56,6 +56,10 @@ func flakyTestsResource(c *Client) mcp.ResourceHandler {
 		if repo == "" {
 			return nil, fmt.Errorf("expected URI of the form buildpulse://repos/{repo}/flaky-tests")
 		}
+		repo, err = validateRepoPart(repo, "repo")
+		if err != nil {
+			return nil, err
+		}
 
 		params := url.Values{}
 		params.Set("repository", repo)
@@ -93,7 +97,14 @@ func submissionsResource(c *Client) mcp.ResourceHandler {
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("expected URI of the form buildpulse://repos/{owner}/{name}/submissions")
 		}
-		owner, name := parts[0], parts[1]
+		owner, err := validateRepoPart(parts[0], "owner")
+		if err != nil {
+			return nil, err
+		}
+		name, err := validateRepoPart(parts[1], "name")
+		if err != nil {
+			return nil, err
+		}
 
 		params := url.Values{}
 		params.Set("limit", "25")

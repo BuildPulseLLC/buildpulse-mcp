@@ -39,14 +39,24 @@ func (l *tokenLimiter) allow(key string, now time.Time) bool {
 	cutoff := now.Add(-toolRateWindow)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	times := l.hits[key]
-	i := 0
-	for i < len(times) && !times[i].After(cutoff) {
-		i++
+
+	// Drop keys whose hits have all aged out so a long-lived ECS task
+	// does not retain one map entry per token that ever called a tool.
+	for k, ts := range l.hits {
+		j := 0
+		for j < len(ts) && !ts[j].After(cutoff) {
+			j++
+		}
+		ts = ts[j:]
+		if len(ts) == 0 {
+			delete(l.hits, k)
+		} else {
+			l.hits[k] = ts
+		}
 	}
-	times = times[i:]
+
+	times := l.hits[key]
 	if len(times) >= toolRateLimit {
-		l.hits[key] = times
 		return false
 	}
 	l.hits[key] = append(times, now)

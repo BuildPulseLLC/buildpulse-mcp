@@ -24,6 +24,24 @@ func TestTokenLimiterAllowsBurstThenBlocks(t *testing.T) {
 	}
 }
 
+func TestTokenLimiterEvictsIdleKeys(t *testing.T) {
+	l := newTokenLimiter()
+	now := time.Unix(1_700_000_000, 0)
+	if !l.allow("idle", now) {
+		t.Fatal("idle token should be allowed")
+	}
+	later := now.Add(toolRateWindow + time.Second)
+	if !l.allow("fresh", later) {
+		t.Fatal("fresh token should be allowed")
+	}
+	if _, ok := l.hits["idle"]; ok {
+		t.Fatal("idle key should be deleted once its window has elapsed")
+	}
+	if _, ok := l.hits["fresh"]; !ok {
+		t.Fatal("active key should remain")
+	}
+}
+
 func TestOrganizationIDFrom(t *testing.T) {
 	type in struct {
 		OrganizationID string `json:"organization_id"`

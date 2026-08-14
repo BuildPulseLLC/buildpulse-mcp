@@ -77,14 +77,14 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "List my BuildPulse organizations",
 		Description: "Return every BuildPulse organization the current MCP session can access. Multi-tenant users must call this first to discover the `id` (UUID) of the organization they want to scope subsequent tool calls to — pass that `id` as the `organization_id` argument on find_flaky_tests / get_test_history / list_recent_submissions / get_repo_flakiness / get_repo_coverage. Single-tenant callers will see exactly one entry and don't need to pass `organization_id`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(listMyOrganizations(c)))
+	}, guarded(c, "list_my_organizations", listMyOrganizations(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_repositories",
 		Title:       "List repositories in a BuildPulse organization",
 		Description: "Return every repository BuildPulse is monitoring for the given organization, sorted alphabetically. Call this whenever the user asks a repo-scoped question (\"do I have flaky tests?\", \"why is CI red?\") without naming a specific repo — the `name` field is what you pass to find_flaky_tests / list_recent_submissions / get_repo_flakiness / get_repo_coverage as their `repository` argument. For multi-tenant users, pass `organization_id` (call list_my_organizations first to enumerate); single-tenant tokens see exactly the bound org's repos.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(listRepositories(c)))
+	}, guarded(c, "list_repositories", listRepositories(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "find_flaky_tests",
@@ -94,49 +94,49 @@ func registerTools(s *mcp.Server, c *Client) {
 			ReadOnlyHint: true,
 			Title:        "Find flaky tests",
 		},
-	}, overageAware(findFlakyTests(c)))
+	}, guarded(c, "find_flaky_tests", findFlakyTests(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_test_history",
 		Title:       "Get test history",
 		Description: "Return the most-recent disruption (failure / flake) events for a specific test, identified by its BuildPulse test_id. Up to 10 events from the last 14 days. Each event includes the CI build URL and commit SHA — useful for correlating regressions with code changes.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getTestHistory(c)))
+	}, guarded(c, "get_test_history", getTestHistory(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_recent_submissions",
 		Title:       "List recent CI runs",
 		Description: "List the most-recent test submissions (CI runs) for a repository. Each entry corresponds to one CI run that uploaded test results to BuildPulse. Reach for this first when a user asks \"why is CI red?\" or \"what changed in the last hour\". Each entry includes an `id` you can pass to get_submission_test_results to drill into the individual test results for that run.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(listRecentSubmissions(c)))
+	}, guarded(c, "list_recent_submissions", listRecentSubmissions(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_submission_test_results",
 		Title:       "Get per-test results for a submission",
 		Description: "Return the individual test results recorded against one submission (one CI run). Use `status=\"failed\"` to filter to just the failures and errors — the typical \"red build\" set. Each result carries the test name / suite / file / class, the per-attempt duration in microseconds, the failure message, and the runner-recorded run count (1=first attempt, 2+=retries). Get a submission `id` from list_recent_submissions first.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getSubmissionTestResults(c)))
+	}, guarded(c, "get_submission_test_results", getSubmissionTestResults(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_recent_failures",
 		Title:       "Get failures across recent CI runs",
 		Description: "Return tests that failed in any of the most recent N submissions for a repository, aggregated by test identity (name+suite+file). For each test, returns failure_count (how many of the recent runs it failed in), most_recent_failure_at, most_recent_build_url, and the failure message from the most recent occurrence. Unlike find_flaky_tests, this is NOT filtered by the statistical flakiness threshold — it surfaces every test that failed in the recent window, which matches workflows where customers only upload to BuildPulse after their own CI has already passed (so any failure observed by BuildPulse is by definition unexpected). Default window is the last 10 submissions.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getRecentFailures(c)))
+	}, guarded(c, "get_recent_failures", getRecentFailures(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_flakiness",
 		Title:       "Get repo flakiness %",
 		Description: "Return the current flakiness percentage for a repository over the last 14 days. Higher is worse. Use this for a quick health snapshot before drilling into individual tests with find_flaky_tests.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getRepoFlakiness(c)))
+	}, guarded(c, "get_repo_flakiness", getRepoFlakiness(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_coverage",
 		Title:       "Get repo coverage %",
 		Description: "Return the current test coverage percentage for a repository (from the most-recent coverage report).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getRepoCoverage(c)))
+	}, guarded(c, "get_repo_coverage", getRepoCoverage(c)))
 }
 
 // addOrgParam appends `organization_id=<uuid>` to the given query
@@ -288,18 +288,18 @@ func listRepositories(c *Client) mcp.ToolHandlerFor[listReposInput, listReposOut
 // --- find_flaky_tests --------------------------------------------------------
 
 type findFlakyInput struct {
-	Repository         string   `json:"repository" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
-	OrganizationID     string   `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
-	Tags               []string `json:"tags,omitempty" jsonschema:"optional list of tags — matches any (OR)"`
-	Search             string   `json:"search,omitempty" jsonschema:"optional free-text match on test name, suite, file, or classname"`
-	SinceDate          string   `json:"since,omitempty" jsonschema:"only return tests last seen on or after this YYYY-MM-DD"`
-	Sort               string   `json:"sort,omitempty" jsonschema:"'disruptivenessRatio' (default) or 'recency'"`
+	Repository     string   `json:"repository" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
+	OrganizationID string   `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
+	Tags           []string `json:"tags,omitempty" jsonschema:"optional list of tags — matches any (OR)"`
+	Search         string   `json:"search,omitempty" jsonschema:"optional free-text match on test name, suite, file, or classname"`
+	SinceDate      string   `json:"since,omitempty" jsonschema:"only return tests last seen on or after this YYYY-MM-DD"`
+	Sort           string   `json:"sort,omitempty" jsonschema:"'disruptivenessRatio' (default) or 'recency'"`
 	// Renamed from include_quarantined. platform-api's /api/v1/flaky/tests now
 	// exposes two MUTUALLY EXCLUSIVE views (quarantined XOR not), matching the
 	// legacy Rails API — "include both in one response" is no longer a thing the
 	// endpoint can express, so "include_" was actively misleading.
 	Quarantined bool `json:"quarantined,omitempty" jsonschema:"return QUARANTINED tests instead of active flaky ones. These are exclusive: false (default) lists tests currently flaking and not quarantined; true lists the quarantine roster. There is no combined view."`
-	Limit              int      `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 25)"`
+	Limit       int  `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 25)"`
 }
 
 type flakyTestOut struct {
@@ -661,26 +661,26 @@ type recentFailuresInput struct {
 }
 
 type recentFailureOut struct {
-	TestCaseID            string  `json:"test_case_id"`
-	Name                  string  `json:"name"`
-	Suite                 string  `json:"suite,omitempty"`
-	Class                 string  `json:"class,omitempty"`
-	File                  string  `json:"file,omitempty"`
-	FailureCount          int     `json:"failure_count" jsonschema:"how many of the inspected submissions this test failed in"`
-	MostRecentRanAt       string  `json:"most_recent_ran_at"`
-	MostRecentBuildURL    string  `json:"most_recent_build_url,omitempty"`
-	MostRecentMessage     *string `json:"most_recent_message,omitempty"`
-	MostRecentBody        *string `json:"most_recent_body,omitempty"`
-	MostRecentDurationUS  int64   `json:"most_recent_duration_us"`
+	TestCaseID           string  `json:"test_case_id"`
+	Name                 string  `json:"name"`
+	Suite                string  `json:"suite,omitempty"`
+	Class                string  `json:"class,omitempty"`
+	File                 string  `json:"file,omitempty"`
+	FailureCount         int     `json:"failure_count" jsonschema:"how many of the inspected submissions this test failed in"`
+	MostRecentRanAt      string  `json:"most_recent_ran_at"`
+	MostRecentBuildURL   string  `json:"most_recent_build_url,omitempty"`
+	MostRecentMessage    *string `json:"most_recent_message,omitempty"`
+	MostRecentBody       *string `json:"most_recent_body,omitempty"`
+	MostRecentDurationUS int64   `json:"most_recent_duration_us"`
 }
 
 type recentFailuresOutput struct {
-	Owner               string             `json:"owner"`
-	Name                string             `json:"name"`
-	SubmissionsInspected int               `json:"submissions_inspected"`
-	UniqueTestsFailed   int                `json:"unique_tests_failed"`
-	Failures            []recentFailureOut `json:"failures"`
-	WebURL              string             `json:"web_url"`
+	Owner                string             `json:"owner"`
+	Name                 string             `json:"name"`
+	SubmissionsInspected int                `json:"submissions_inspected"`
+	UniqueTestsFailed    int                `json:"unique_tests_failed"`
+	Failures             []recentFailureOut `json:"failures"`
+	WebURL               string             `json:"web_url"`
 }
 
 func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recentFailuresOutput] {

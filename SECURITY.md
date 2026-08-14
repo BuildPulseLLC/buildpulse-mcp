@@ -74,7 +74,25 @@ write/fetch/code-exec tools we do not ship, and they would kneecap triage:
 - **Hiding tool lists or blocking multi-step sessions.** That *is* how
   customers use the product.
 - **Session-kill on "intent change."** Power users chain many reads after a
-  quiet start. Prefer generous rate limits (P1) over killing the session.
+  quiet start. Prefer generous rate limits (P1, implemented: 120 tool calls
+  per token per minute, retryable tool result, session stays up) over killing
+  the session.
+
+## P1 controls (DEV-189)
+
+- **Per-token rate limits.** `internal/mcpserver/policy.go`: 120 tool calls
+  per hashed token per rolling minute. Excess calls return a retryable tool
+  error (`IsError`), not a transport drop and not a revoked session.
+- **Audit log.** Each tool invocation logs
+  `mcp_audit tool="…" org="…" status="ok|error|rate_limited"`. Org is the
+  `organization_id` argument when present (`-` otherwise). The raw token is
+  never logged (a SHA-256 prefix is used only as the rate-limit key).
+- **OAuth revoke.** Hosted `POST /oauth/revoke` (RFC 7009). Access tokens are
+  deleted from `mcpSessions` (platform-api then 401s). Refresh tokens are
+  popped from the OAuth store. Discovery advertises `revocation_endpoint`.
+  Public clients; unknown tokens still return 200.
+
+No HITL on read tools.
 - **Aggressive output redaction.** Failure messages and stack traces are the
   product. Secret-shaped scrubbing is P2 and must be proven against real
   fixtures first.

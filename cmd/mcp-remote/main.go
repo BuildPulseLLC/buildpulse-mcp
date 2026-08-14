@@ -71,6 +71,9 @@ func main() {
 	if platformURL == "" {
 		platformURL = mcpserver.DefaultPlatformURL
 	}
+	if err := mcpserver.ValidateHostedPlatformURL(platformURL); err != nil {
+		log.Fatalf("PLATFORM_API_URL: %v", err)
+	}
 
 	// Connect to DocumentDB so the OAuth callback can write mcpSession
 	// records that platform-api's auth middleware accepts on tool

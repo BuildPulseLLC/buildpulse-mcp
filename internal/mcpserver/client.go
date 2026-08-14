@@ -14,6 +14,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -162,9 +163,55 @@ func NewClient(baseURL, token string) *Client {
 		baseURL: baseURL,
 		token:   token,
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: sameHostRedirect,
 		},
 	}
+}
+
+// sameHostRedirect lets platform-api issue same-origin redirects (trailing
+// slash, etc.) but refuses a hop to any other host — the SSRF primitive a
+// poisoned Location header would otherwise give us.
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("stopped after 5 redirects")
+	}
+	orig := via[0].URL
+	if req.URL.Scheme != orig.Scheme || req.URL.Host != orig.Host {
+		return fmt.Errorf("blocked redirect from %s to %s", orig.Host, req.URL.Host)
+	}
+	return nil
+}
+
+// resolveAPIURL builds the outbound request URL. Tool arguments never
+// become a host: only paths under /api on the configured base URL are
+// allowed, and scheme-relative or absolute URLs are rejected.
+func (c *Client) resolveAPIURL(path string, params url.Values) (string, error) {
+	if !strings.HasPrefix(path, "/api") {
+		return "", fmt.Errorf("refusing to request non-/api path %q", path)
+	}
+	if strings.Contains(path, "..") || strings.Contains(path, "@") || strings.Contains(path, "\\") {
+		return "", fmt.Errorf("invalid platform API path")
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid platform API base URL: %w", err)
+	}
+	rel, err := url.Parse(path)
+	if err != nil {
+		return "", fmt.Errorf("invalid platform API path: %w", err)
+	}
+	if rel.IsAbs() || rel.Host != "" || rel.Scheme != "" || rel.User != nil {
+		return "", fmt.Errorf("refusing absolute URL as platform API path")
+	}
+	resolved := base.ResolveReference(rel)
+	if resolved.Scheme != base.Scheme || resolved.Host != base.Host {
+		return "", fmt.Errorf("refusing to leave platform API host %s", base.Host)
+	}
+	if len(params) > 0 {
+		resolved.RawQuery = params.Encode()
+	}
+	return resolved.String(), nil
 }
 
 // BaseURL returns the configured platform API base URL.
@@ -195,9 +242,9 @@ func (c *Client) WebURL(path string) string {
 // Get performs an authenticated GET against the platform API. The
 // path must start with "/api". Returns the body bytes and Content-Type.
 func (c *Client) Get(ctx context.Context, path string, params url.Values) ([]byte, string, error) {
-	full := c.baseURL + path
-	if len(params) > 0 {
-		full += "?" + params.Encode()
+	full, err := c.resolveAPIURL(path, params)
+	if err != nil {
+		return nil, "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", full, nil)
 	if err != nil {

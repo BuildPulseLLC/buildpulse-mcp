@@ -172,3 +172,18 @@ func persistMCPSession(ctx context.Context, plaintextToken, cognitoSub, cognitoE
 	}
 	return nil
 }
+
+// deleteMCPSession removes the DocumentDB row for this access token so
+// platform-api 401s immediately (RFC 7009 /oauth/revoke). No-op when
+// DocumentDB is not configured or the token was never persisted.
+func deleteMCPSession(ctx context.Context, plaintextToken string) {
+	db := dbDatabase()
+	if db == nil || plaintextToken == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(plaintextToken))
+	hashed := base64.StdEncoding.EncodeToString(sum[:])
+	if _, err := db.Collection("mcpSessions").DeleteOne(ctx, bson.M{"hashedToken": hashed}); err != nil {
+		log.Printf("deleteMCPSession: %v", err)
+	}
+}

@@ -228,7 +228,7 @@ func callRecentFailures(t *testing.T, baseURL string) recentFailuresOutput {
 	_, out, err := handler(ctx, nil, recentFailuresInput{
 		Owner:          "acme",
 		Name:           "widgets",
-		OrganizationID: "org-1",
+		OrganizationID: "11111111-1111-1111-1111-111111111111",
 	})
 	if err != nil {
 		t.Fatalf("getRecentFailures returned error: %v", err)

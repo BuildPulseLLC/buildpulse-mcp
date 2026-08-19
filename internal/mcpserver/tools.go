@@ -77,14 +77,14 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "List my BuildPulse organizations",
 		Description: "Return every BuildPulse organization the current MCP session can access. Multi-tenant users must call this first to discover the `id` (UUID) of the organization they want to scope subsequent tool calls to — pass that `id` as the `organization_id` argument on find_flaky_tests / get_test_history / list_recent_submissions / get_repo_flakiness / get_repo_coverage. Single-tenant callers will see exactly one entry and don't need to pass `organization_id`.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(listMyOrganizations(c)))
+	}, guarded(c, "list_my_organizations", listMyOrganizations(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_repositories",
 		Title:       "List repositories in a BuildPulse organization",
 		Description: "Return every repository BuildPulse is monitoring for the given organization, sorted alphabetically. Call this whenever the user asks a repo-scoped question (\"do I have flaky tests?\", \"why is CI red?\") without naming a specific repo — the `name` field is what you pass to find_flaky_tests / list_recent_submissions / get_repo_flakiness / get_repo_coverage as their `repository` argument. For multi-tenant users, pass `organization_id` (call list_my_organizations first to enumerate); single-tenant tokens see exactly the bound org's repos.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(listRepositories(c)))
+	}, guarded(c, "list_repositories", listRepositories(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "find_flaky_tests",
@@ -94,49 +94,49 @@ func registerTools(s *mcp.Server, c *Client) {
 			ReadOnlyHint: true,
 			Title:        "Find flaky tests",
 		},
-	}, overageAware(findFlakyTests(c)))
+	}, guarded(c, "find_flaky_tests", findFlakyTests(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_test_history",
 		Title:       "Get test history",
 		Description: "Return the most-recent disruption (failure / flake) events for a specific test, identified by its BuildPulse test_id. Up to 10 events from the last 14 days. Each event includes the CI build URL and commit SHA — useful for correlating regressions with code changes.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getTestHistory(c)))
+	}, guarded(c, "get_test_history", getTestHistory(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_recent_submissions",
 		Title:       "List recent CI runs",
 		Description: "List the most-recent test submissions (CI runs) for a repository. Each entry corresponds to one CI run that uploaded test results to BuildPulse. Reach for this first when a user asks \"why is CI red?\" or \"what changed in the last hour\". Each entry includes an `id` you can pass to get_submission_test_results to drill into the individual test results for that run.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(listRecentSubmissions(c)))
+	}, guarded(c, "list_recent_submissions", listRecentSubmissions(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_submission_test_results",
 		Title:       "Get per-test results for a submission",
 		Description: "Return the individual test results recorded against one submission (one CI run). Use `status=\"failed\"` to filter to just the failures and errors — the typical \"red build\" set. Each result carries the test name / suite / file / class, the per-attempt duration in microseconds, the failure message, and the runner-recorded run count (1=first attempt, 2+=retries). Get a submission `id` from list_recent_submissions first.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getSubmissionTestResults(c)))
+	}, guarded(c, "get_submission_test_results", getSubmissionTestResults(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_recent_failures",
 		Title:       "Get failures across recent CI runs",
 		Description: "Return tests that failed in any of the most recent N submissions for a repository, aggregated by test identity (name+suite+file). For each test, returns failure_count (how many of the recent runs it failed in), most_recent_failure_at, most_recent_build_url, and the failure message from the most recent occurrence. Unlike find_flaky_tests, this is NOT filtered by the statistical flakiness threshold — it surfaces every test that failed in the recent window, which matches workflows where customers only upload to BuildPulse after their own CI has already passed (so any failure observed by BuildPulse is by definition unexpected). Default window is the last 10 submissions.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getRecentFailures(c)))
+	}, guarded(c, "get_recent_failures", getRecentFailures(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_flakiness",
 		Title:       "Get repo flakiness %",
 		Description: "Return the current flakiness percentage for a repository over the last 14 days. Higher is worse. Use this for a quick health snapshot before drilling into individual tests with find_flaky_tests.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getRepoFlakiness(c)))
+	}, guarded(c, "get_repo_flakiness", getRepoFlakiness(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_repo_coverage",
 		Title:       "Get repo coverage %",
 		Description: "Return the current test coverage percentage for a repository (from the most-recent coverage report).",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-	}, overageAware(getRepoCoverage(c)))
+	}, guarded(c, "get_repo_coverage", getRepoCoverage(c)))
 }
 
 // addOrgParam appends `organization_id=<uuid>` to the given query
@@ -169,6 +169,9 @@ func addOrgParam(params url.Values, orgID string) {
 // The extra /api/me/organizations lookup only happens when organization_id is
 // omitted; a caller that already passes one pays nothing.
 func resolveOrgID(ctx context.Context, c *Client, orgID string) (string, error) {
+	if err := validateOrganizationID(orgID); err != nil {
+		return "", err
+	}
 	if s := strings.TrimSpace(orgID); s != "" {
 		return s, nil
 	}
@@ -285,18 +288,18 @@ func listRepositories(c *Client) mcp.ToolHandlerFor[listReposInput, listReposOut
 // --- find_flaky_tests --------------------------------------------------------
 
 type findFlakyInput struct {
-	Repository         string   `json:"repository" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
-	OrganizationID     string   `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
-	Tags               []string `json:"tags,omitempty" jsonschema:"optional list of tags — matches any (OR)"`
-	Search             string   `json:"search,omitempty" jsonschema:"optional free-text match on test name, suite, file, or classname"`
-	SinceDate          string   `json:"since,omitempty" jsonschema:"only return tests last seen on or after this YYYY-MM-DD"`
-	Sort               string   `json:"sort,omitempty" jsonschema:"'disruptivenessRatio' (default) or 'recency'"`
+	Repository     string   `json:"repository" jsonschema:"the repository name, case-insensitive (e.g. 'widgets')"`
+	OrganizationID string   `json:"organization_id,omitempty" jsonschema:"organization UUID (the id field from list_my_organizations). Required for multi-tenant users; ignored for single-org tokens."`
+	Tags           []string `json:"tags,omitempty" jsonschema:"optional list of tags — matches any (OR)"`
+	Search         string   `json:"search,omitempty" jsonschema:"optional free-text match on test name, suite, file, or classname"`
+	SinceDate      string   `json:"since,omitempty" jsonschema:"only return tests last seen on or after this YYYY-MM-DD"`
+	Sort           string   `json:"sort,omitempty" jsonschema:"'disruptivenessRatio' (default) or 'recency'"`
 	// Renamed from include_quarantined. platform-api's /api/v1/flaky/tests now
 	// exposes two MUTUALLY EXCLUSIVE views (quarantined XOR not), matching the
 	// legacy Rails API — "include both in one response" is no longer a thing the
 	// endpoint can express, so "include_" was actively misleading.
 	Quarantined bool `json:"quarantined,omitempty" jsonschema:"return QUARANTINED tests instead of active flaky ones. These are exclusive: false (default) lists tests currently flaking and not quarantined; true lists the quarantine roster. There is no combined view."`
-	Limit              int      `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 25)"`
+	Limit       int  `json:"limit,omitempty" jsonschema:"page size, 1-100 (default 25)"`
 }
 
 type flakyTestOut struct {
@@ -325,8 +328,12 @@ type findFlakyOutput struct {
 
 func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in findFlakyInput) (*mcp.CallToolResult, findFlakyOutput, error) {
-		if strings.TrimSpace(in.Repository) == "" {
-			return nil, findFlakyOutput{}, fmt.Errorf("repository is required")
+		repo, err := validateRepoPart(in.Repository, "repository")
+		if err != nil {
+			return nil, findFlakyOutput{}, err
+		}
+		if err := validateOptionalLimit(in.Limit, 100); err != nil {
+			return nil, findFlakyOutput{}, err
 		}
 		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
 		if err != nil {
@@ -334,7 +341,7 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 		}
 
 		params := url.Values{}
-		params.Set("repository", in.Repository)
+		params.Set("repository", repo)
 		params.Set("include", "disruptiveness_ratio,nondeterministic_negative_result_count,nondeterminism_first_recorded_at,tags,time_consumed,pass_rate,avg_duration_ms")
 		addOrgParam(params, orgID)
 
@@ -391,10 +398,10 @@ func findFlakyTests(c *Client) mcp.ToolHandlerFor[findFlakyInput, findFlakyOutpu
 		}
 
 		out := findFlakyOutput{
-			Repository: in.Repository,
+			Repository: repo,
 			Count:      resp.Count,
 			Tests:      make([]flakyTestOut, 0, len(resp.Tests)),
-			WebURL:     c.WebURL("/flaky-tests?repository=" + url.QueryEscape(in.Repository)),
+			WebURL:     c.WebURL("/flaky-tests?repository=" + url.QueryEscape(repo)),
 		}
 		for _, t := range resp.Tests {
 			out.Tests = append(out.Tests, flakyTestOut{
@@ -443,11 +450,9 @@ type testHistoryOutput struct {
 
 func getTestHistory(c *Client) mcp.ToolHandlerFor[testHistoryInput, testHistoryOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in testHistoryInput) (*mcp.CallToolResult, testHistoryOutput, error) {
-		if strings.TrimSpace(in.TestID) == "" {
-			return nil, testHistoryOutput{}, fmt.Errorf("test_id is required")
-		}
-		if len(in.TestID) != 24 {
-			return nil, testHistoryOutput{}, fmt.Errorf("test_id must be a 24-char hex string, got %d chars", len(in.TestID))
+		testID, err := validateObjectID(in.TestID, "test_id")
+		if err != nil {
+			return nil, testHistoryOutput{}, err
 		}
 		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
 		if err != nil {
@@ -460,14 +465,14 @@ func getTestHistory(c *Client) mcp.ToolHandlerFor[testHistoryInput, testHistoryO
 		var r resp
 		params := url.Values{}
 		addOrgParam(params, orgID)
-		if err := c.GetJSON(ctx, "/api/tests/"+url.PathEscape(in.TestID)+"/results", params, &r); err != nil {
+		if err := c.GetJSON(ctx, "/api/tests/"+url.PathEscape(testID)+"/results", params, &r); err != nil {
 			return nil, testHistoryOutput{}, err
 		}
 		return nil, testHistoryOutput{
-			TestID: in.TestID,
+			TestID: testID,
 			Count:  len(r.Results),
 			Events: r.Results,
-			WebURL: c.WebURL("/tests/" + url.PathEscape(in.TestID)),
+			WebURL: c.WebURL("/tests/" + url.PathEscape(testID)),
 		}, nil
 	}
 }
@@ -502,8 +507,16 @@ type submissionsOutput struct {
 
 func listRecentSubmissions(c *Client) mcp.ToolHandlerFor[submissionsInput, submissionsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in submissionsInput) (*mcp.CallToolResult, submissionsOutput, error) {
-		if strings.TrimSpace(in.Owner) == "" || strings.TrimSpace(in.Name) == "" {
-			return nil, submissionsOutput{}, fmt.Errorf("owner and name are required")
+		owner, err := validateRepoPart(in.Owner, "owner")
+		if err != nil {
+			return nil, submissionsOutput{}, err
+		}
+		name, err := validateRepoPart(in.Name, "name")
+		if err != nil {
+			return nil, submissionsOutput{}, err
+		}
+		if err := validateOptionalLimit(in.Limit, 100); err != nil {
+			return nil, submissionsOutput{}, err
 		}
 		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
 		if err != nil {
@@ -525,18 +538,18 @@ func listRecentSubmissions(c *Client) mcp.ToolHandlerFor[submissionsInput, submi
 			} `json:"metadata"`
 		}
 		var r resp
-		path := fmt.Sprintf("/api/repos/%s/%s/submissions", url.PathEscape(in.Owner), url.PathEscape(in.Name))
+		path := fmt.Sprintf("/api/repos/%s/%s/submissions", url.PathEscape(owner), url.PathEscape(name))
 		if err := c.GetJSON(ctx, path, params, &r); err != nil {
 			return nil, submissionsOutput{}, err
 		}
 
 		return nil, submissionsOutput{
-			Owner:       in.Owner,
-			Name:        in.Name,
+			Owner:       owner,
+			Name:        name,
 			Count:       r.Count,
 			Submissions: r.Submissions,
 			NextCursor:  r.Metadata.After,
-			WebURL:      c.WebURL("/repos/" + url.PathEscape(in.Owner) + "/" + url.PathEscape(in.Name)),
+			WebURL:      c.WebURL("/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name)),
 		}, nil
 	}
 }
@@ -580,12 +593,20 @@ type submissionTestResultsOutput struct {
 
 func getSubmissionTestResults(c *Client) mcp.ToolHandlerFor[submissionTestResultsInput, submissionTestResultsOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in submissionTestResultsInput) (*mcp.CallToolResult, submissionTestResultsOutput, error) {
-		if strings.TrimSpace(in.Owner) == "" || strings.TrimSpace(in.Name) == "" {
-			return nil, submissionTestResultsOutput{}, fmt.Errorf("owner and name are required")
+		owner, err := validateRepoPart(in.Owner, "owner")
+		if err != nil {
+			return nil, submissionTestResultsOutput{}, err
 		}
-		subID := strings.TrimSpace(in.SubmissionID)
-		if len(subID) != 24 {
-			return nil, submissionTestResultsOutput{}, fmt.Errorf("submission_id must be a 24-char hex string, got %d chars", len(subID))
+		name, err := validateRepoPart(in.Name, "name")
+		if err != nil {
+			return nil, submissionTestResultsOutput{}, err
+		}
+		subID, err := validateObjectID(in.SubmissionID, "submission_id")
+		if err != nil {
+			return nil, submissionTestResultsOutput{}, err
+		}
+		if err := validateOptionalLimit(in.Limit, 100); err != nil {
+			return nil, submissionTestResultsOutput{}, err
 		}
 		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
 		if err != nil {
@@ -611,21 +632,21 @@ func getSubmissionTestResults(c *Client) mcp.ToolHandlerFor[submissionTestResult
 		}
 		var r resp
 		path := fmt.Sprintf("/api/repos/%s/%s/submissions/%s/tests",
-			url.PathEscape(in.Owner), url.PathEscape(in.Name), url.PathEscape(subID))
+			url.PathEscape(owner), url.PathEscape(name), url.PathEscape(subID))
 		if err := c.GetJSON(ctx, path, params, &r); err != nil {
 			return nil, submissionTestResultsOutput{}, err
 		}
 
 		return nil, submissionTestResultsOutput{
-			Owner:        in.Owner,
-			Name:         in.Name,
+			Owner:        owner,
+			Name:         name,
 			SubmissionID: subID,
 			Status:       in.Status,
 			Count:        r.Count,
 			Tests:        r.Tests,
 			NextCursor:   r.Metadata.After,
-			WebURL: c.WebURL("/repos/" + url.PathEscape(in.Owner) + "/" +
-				url.PathEscape(in.Name) + "/builds/" + url.PathEscape(subID)),
+			WebURL: c.WebURL("/repos/" + url.PathEscape(owner) + "/" +
+				url.PathEscape(name) + "/builds/" + url.PathEscape(subID)),
 		}, nil
 	}
 }
@@ -640,32 +661,40 @@ type recentFailuresInput struct {
 }
 
 type recentFailureOut struct {
-	TestCaseID            string  `json:"test_case_id"`
-	Name                  string  `json:"name"`
-	Suite                 string  `json:"suite,omitempty"`
-	Class                 string  `json:"class,omitempty"`
-	File                  string  `json:"file,omitempty"`
-	FailureCount          int     `json:"failure_count" jsonschema:"how many of the inspected submissions this test failed in"`
-	MostRecentRanAt       string  `json:"most_recent_ran_at"`
-	MostRecentBuildURL    string  `json:"most_recent_build_url,omitempty"`
-	MostRecentMessage     *string `json:"most_recent_message,omitempty"`
-	MostRecentBody        *string `json:"most_recent_body,omitempty"`
-	MostRecentDurationUS  int64   `json:"most_recent_duration_us"`
+	TestCaseID           string  `json:"test_case_id"`
+	Name                 string  `json:"name"`
+	Suite                string  `json:"suite,omitempty"`
+	Class                string  `json:"class,omitempty"`
+	File                 string  `json:"file,omitempty"`
+	FailureCount         int     `json:"failure_count" jsonschema:"how many of the inspected submissions this test failed in"`
+	MostRecentRanAt      string  `json:"most_recent_ran_at"`
+	MostRecentBuildURL   string  `json:"most_recent_build_url,omitempty"`
+	MostRecentMessage    *string `json:"most_recent_message,omitempty"`
+	MostRecentBody       *string `json:"most_recent_body,omitempty"`
+	MostRecentDurationUS int64   `json:"most_recent_duration_us"`
 }
 
 type recentFailuresOutput struct {
-	Owner               string             `json:"owner"`
-	Name                string             `json:"name"`
-	SubmissionsInspected int               `json:"submissions_inspected"`
-	UniqueTestsFailed   int                `json:"unique_tests_failed"`
-	Failures            []recentFailureOut `json:"failures"`
-	WebURL              string             `json:"web_url"`
+	Owner                string             `json:"owner"`
+	Name                 string             `json:"name"`
+	SubmissionsInspected int                `json:"submissions_inspected"`
+	UniqueTestsFailed    int                `json:"unique_tests_failed"`
+	Failures             []recentFailureOut `json:"failures"`
+	WebURL               string             `json:"web_url"`
 }
 
 func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recentFailuresOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in recentFailuresInput) (*mcp.CallToolResult, recentFailuresOutput, error) {
-		if strings.TrimSpace(in.Owner) == "" || strings.TrimSpace(in.Name) == "" {
-			return nil, recentFailuresOutput{}, fmt.Errorf("owner and name are required")
+		owner, err := validateRepoPart(in.Owner, "owner")
+		if err != nil {
+			return nil, recentFailuresOutput{}, err
+		}
+		name, err := validateRepoPart(in.Name, "name")
+		if err != nil {
+			return nil, recentFailuresOutput{}, err
+		}
+		if err := validateSubmissionsWindow(in.Submissions); err != nil {
+			return nil, recentFailuresOutput{}, err
 		}
 		limit := 10
 		if in.Submissions > 0 && in.Submissions <= 50 {
@@ -690,7 +719,7 @@ func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recent
 		}
 		var sr subsResp
 		subPath := fmt.Sprintf("/api/repos/%s/%s/submissions",
-			url.PathEscape(in.Owner), url.PathEscape(in.Name))
+			url.PathEscape(owner), url.PathEscape(name))
 		if err := c.GetJSON(ctx, subPath, subParams, &sr); err != nil {
 			return nil, recentFailuresOutput{}, err
 		}
@@ -757,7 +786,7 @@ func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recent
 
 				var r stResp
 				stPath := fmt.Sprintf("/api/repos/%s/%s/submissions/%s/tests",
-					url.PathEscape(in.Owner), url.PathEscape(in.Name), url.PathEscape(s.ID))
+					url.PathEscape(owner), url.PathEscape(name), url.PathEscape(s.ID))
 				if err := c.GetJSON(ctx, stPath, stParams, &r); err != nil {
 					// best-effort: skip submissions that error so a flaky
 					// one doesn't sink the whole response. results[i].ok
@@ -828,13 +857,13 @@ func getRecentFailures(c *Client) mcp.ToolHandlerFor[recentFailuresInput, recent
 		sortRecentFailures(failures)
 
 		return nil, recentFailuresOutput{
-			Owner:                in.Owner,
-			Name:                 in.Name,
+			Owner:                owner,
+			Name:                 name,
 			SubmissionsInspected: len(sr.Submissions),
 			UniqueTestsFailed:    len(failures),
 			Failures:             failures,
-			WebURL: c.WebURL("/repos/" + url.PathEscape(in.Owner) +
-				"/" + url.PathEscape(in.Name) + "/builds"),
+			WebURL: c.WebURL("/repos/" + url.PathEscape(owner) +
+				"/" + url.PathEscape(name) + "/builds"),
 		}, nil
 	}
 }
@@ -868,8 +897,9 @@ type flakinessOutput struct {
 
 func getRepoFlakiness(c *Client) mcp.ToolHandlerFor[repoMetricInput, flakinessOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in repoMetricInput) (*mcp.CallToolResult, flakinessOutput, error) {
-		if strings.TrimSpace(in.Repository) == "" {
-			return nil, flakinessOutput{}, fmt.Errorf("repository is required")
+		repo, err := validateRepoPart(in.Repository, "repository")
+		if err != nil {
+			return nil, flakinessOutput{}, err
 		}
 		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
 		if err != nil {
@@ -877,7 +907,7 @@ func getRepoFlakiness(c *Client) mcp.ToolHandlerFor[repoMetricInput, flakinessOu
 		}
 
 		params := url.Values{}
-		params.Set("repository", in.Repository)
+		params.Set("repository", repo)
 		addOrgParam(params, orgID)
 		body, _, err := c.Get(ctx, "/api/v1/flaky/badges", params)
 		if err != nil {
@@ -885,11 +915,11 @@ func getRepoFlakiness(c *Client) mcp.ToolHandlerFor[repoMetricInput, flakinessOu
 		}
 		pct := PercentFromBadgeSVG(body)
 		return nil, flakinessOutput{
-			Repository: in.Repository,
+			Repository: repo,
 			Percentage: pct,
 			Color:      FlakinessColor(pct),
-			BadgeURL:   c.BaseURL() + "/api/v1/flaky/badges?repository=" + url.QueryEscape(in.Repository),
-			WebURL:     c.WebURL("/flaky-tests?repository=" + url.QueryEscape(in.Repository)),
+			BadgeURL:   c.BaseURL() + "/api/v1/flaky/badges?repository=" + url.QueryEscape(repo),
+			WebURL:     c.WebURL("/flaky-tests?repository=" + url.QueryEscape(repo)),
 		}, nil
 	}
 }
@@ -906,8 +936,9 @@ type coverageOutput struct {
 
 func getRepoCoverage(c *Client) mcp.ToolHandlerFor[repoMetricInput, coverageOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in repoMetricInput) (*mcp.CallToolResult, coverageOutput, error) {
-		if strings.TrimSpace(in.Repository) == "" {
-			return nil, coverageOutput{}, fmt.Errorf("repository is required")
+		repo, err := validateRepoPart(in.Repository, "repository")
+		if err != nil {
+			return nil, coverageOutput{}, err
 		}
 		orgID, err := resolveOrgID(ctx, c, in.OrganizationID)
 		if err != nil {
@@ -915,7 +946,7 @@ func getRepoCoverage(c *Client) mcp.ToolHandlerFor[repoMetricInput, coverageOutp
 		}
 
 		params := url.Values{}
-		params.Set("repository", in.Repository)
+		params.Set("repository", repo)
 		addOrgParam(params, orgID)
 		body, _, err := c.Get(ctx, "/api/v1/coverage/badges", params)
 		if err != nil {
@@ -923,11 +954,11 @@ func getRepoCoverage(c *Client) mcp.ToolHandlerFor[repoMetricInput, coverageOutp
 		}
 		pct := PercentFromBadgeSVG(body)
 		return nil, coverageOutput{
-			Repository: in.Repository,
+			Repository: repo,
 			Percentage: pct,
 			Color:      CoverageColor(pct),
-			BadgeURL:   c.BaseURL() + "/api/v1/coverage/badges?repository=" + url.QueryEscape(in.Repository),
-			WebURL:     c.WebURL("/coverage?repository=" + url.QueryEscape(in.Repository)),
+			BadgeURL:   c.BaseURL() + "/api/v1/coverage/badges?repository=" + url.QueryEscape(repo),
+			WebURL:     c.WebURL("/coverage?repository=" + url.QueryEscape(repo)),
 		}, nil
 	}
 }

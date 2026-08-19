@@ -298,7 +298,7 @@ func TestMetadataDocument(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &doc)
 	for _, key := range []string{
 		"issuer", "authorization_endpoint", "token_endpoint",
-		"registration_endpoint", "response_types_supported",
+		"revocation_endpoint", "registration_endpoint", "response_types_supported",
 		"code_challenge_methods_supported", "scopes_supported",
 	} {
 		if _, ok := doc[key]; !ok {
@@ -357,6 +357,51 @@ func TestMemoryStoreRoundTrip(t *testing.T) {
 }
 
 // Compile-time check: oauthError writes a valid JSON body.
+func TestRevokeRefreshToken(t *testing.T) {
+	s, mem := newTestServer()
+	plain := "refresh-to-revoke"
+	_ = mem.PutRefresh(context.Background(), &refreshToken{
+		HashedToken: hashTokenB64(plain),
+		ClientID:    "mcp_test",
+		Expires:     time.Now().Add(time.Hour),
+	})
+
+	form := url.Values{"token": {plain}, "token_type_hint": {"refresh_token"}}
+	req := httptest.NewRequest("POST", "/oauth/revoke", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.revoke(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if _, err := mem.PopRefresh(context.Background(), hashTokenB64(plain)); err != ErrNotFound {
+		t.Errorf("refresh token should be gone after revoke, err=%v", err)
+	}
+}
+
+func TestRevokeUnknownTokenStillOK(t *testing.T) {
+	s, _ := newTestServer()
+	form := url.Values{"token": {"never-issued"}}
+	req := httptest.NewRequest("POST", "/oauth/revoke", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.revoke(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for unknown token", w.Code)
+	}
+}
+
+func TestRevokeRequiresToken(t *testing.T) {
+	s, _ := newTestServer()
+	req := httptest.NewRequest("POST", "/oauth/revoke", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.revoke(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
 var _ = func() bool {
 	var buf bytes.Buffer
 	w := httptest.NewRecorder()

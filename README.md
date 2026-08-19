@@ -1,4 +1,6 @@
-# BuildPulse MCP
+<a href="https://buildpulse.io"><img src=".github/banner.svg" alt="buildpulse-mcp, by BuildPulse" width="100%"></a>
+
+<a href="https://buildpulse.io/mcp?ref=github-badge"><img src=".github/runs-on-buildpulse-compact.svg" alt="Runs on BuildPulse" height="28"></a>
 
 > Model Context Protocol server for the [BuildPulse](https://buildpulse.io)
 > Platform API. Surface flaky tests, CI run history, and coverage health
@@ -136,6 +138,14 @@ state into context without a tool call:
 |---|---|---|
 | `BUILDPULSE_TOKEN` | yes | — |
 | `PLATFORM_API_URL` | no | `https://platform.buildpulse.io` |
+
+The **hosted** server (`mcp-remote`) will refuse to start unless
+`PLATFORM_API_URL` is production or development Platform API. Local stdio
+(`npx @buildpulse/mcp`) is unchanged. See [SECURITY.md](./SECURITY.md) for
+the threat model, tenant isolation, P1 rate limits (120 tool calls / token /
+minute), the tool audit log, RFC 7009 `/oauth/revoke`, and what we
+deliberately do not gate (HITL on reads, hiding tools, killing multi-step
+triage).
 
 ## Build from source
 

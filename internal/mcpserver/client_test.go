@@ -1,6 +1,13 @@
 package mcpserver
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+)
 
 func TestPercentFromBadgeSVG(t *testing.T) {
 	cases := []struct {
@@ -89,5 +96,56 @@ func TestWebURL(t *testing.T) {
 	c3 := NewClient("https://example.com", "abc")
 	if got, want := c3.WebURL("/repos/x/y"), "https://example.com/repos/x/y"; got != want {
 		t.Errorf("WebURL = %q, want %q", got, want)
+	}
+}
+
+func TestResolveAPIURL(t *testing.T) {
+	c := NewClient("https://platform.buildpulse.io", "tok")
+	got, err := c.resolveAPIURL("/api/me/organizations", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://platform.buildpulse.io/api/me/organizations" {
+		t.Errorf("got %q", got)
+	}
+
+	params := url.Values{}
+	params.Set("organization_id", "11111111-1111-1111-1111-111111111111")
+	got, err = c.resolveAPIURL("/api/v1/flaky/tests", params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "organization_id=") {
+		t.Errorf("query not attached: %q", got)
+	}
+
+	bads := []string{
+		"/health",
+		"https://evil.example/api",
+		"//evil.example/api",
+		"/api/../secret",
+		"/api/foo@evil",
+	}
+	for _, p := range bads {
+		if _, err := c.resolveAPIURL(p, nil); err == nil {
+			t.Errorf("path %q should be rejected", p)
+		}
+	}
+}
+
+func TestClientGet_BlocksOffHostRedirect(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/me/organizations", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://evil.example/steal", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	_, _, err := NewClient(srv.URL, "tok").Get(context.Background(), "/api/me/organizations", nil)
+	if err == nil {
+		t.Fatal("off-host redirect must fail")
+	}
+	if !strings.Contains(err.Error(), "blocked redirect") && !strings.Contains(err.Error(), "redirect") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

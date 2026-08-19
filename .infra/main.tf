@@ -67,7 +67,9 @@ Two notable differences vs. platform-api:
   - PLATFORM_API_URL is the only required env var; the MCP doesn't
     touch the database. Authentication is per-request: the
     Authorization header is forwarded to the platform API for
-    validation on every tool call.
+    validation on every tool call. The variable is allowlisted
+    (https://platform.buildpulse.io or https://platform.dev.buildpulse.io)
+    in Terraform and again at mcp-remote startup — see SECURITY.md.
 
 The image reference `ecr.mcp_remote` must exist in the environment/
 remote state — see ./README.md prerequisites.

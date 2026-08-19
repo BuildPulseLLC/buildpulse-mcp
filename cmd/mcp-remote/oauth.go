@@ -9,8 +9,8 @@ package main
 // Design:
 //
 //   - The MCP server is the OAuth authorization server (issuer =
-//     https://mcp.buildpulse.io). It owns /authorize, /token, and
-//     /register endpoints, plus the discovery document at
+//     https://mcp.buildpulse.io). It owns /authorize, /token, /revoke,
+//     and /register endpoints, plus the discovery document at
 //     /.well-known/oauth-authorization-server.
 //
 //   - Actual user authentication is delegated to Cognito Hosted UI
@@ -56,8 +56,9 @@ package main
 //      ever issue write capabilities (e.g. quarantine tests), add a
 //      `buildpulse.write` scope and enforce per-tool.
 //
-//   5. **Token revocation** — RFC 7009 /oauth/revoke endpoint is not
-//      yet implemented. Mostly a nicety; tokens have a 1h TTL anyway.
+//   5. **Token revocation** — RFC 7009 POST /oauth/revoke. Access tokens
+//      are deleted from mcpSessions; refresh tokens are popped from the
+//      OAuth store. Public clients (token_endpoint_auth_method=none).
 
 import (
 	"crypto/rand"
@@ -163,8 +164,8 @@ func newOAuthServer(store Store, cr crypter) *oauthServer {
 // integrity guarantee — clients are public per the spec when they
 // can't keep secrets (any local stdio/desktop MCP client).
 type registeredClient struct {
-	ClientID     string    `json:"client_id"`
-	ClientName   string    `json:"client_name,omitempty"`
+	ClientID     string   `json:"client_id"`
+	ClientName   string   `json:"client_name,omitempty"`
 	RedirectURIs []string `json:"redirect_uris"`
 	GrantTypes   []string `json:"grant_types"`
 	// CreatedAt is serialized as Unix epoch seconds (an integer) per
@@ -181,12 +182,12 @@ type registeredClient struct {
 // clients that validate against the spec.
 func (c *registeredClient) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		ClientID            string   `json:"client_id"`
-		ClientName          string   `json:"client_name,omitempty"`
-		RedirectURIs        []string `json:"redirect_uris"`
-		GrantTypes          []string `json:"grant_types"`
-		ClientIDIssuedAt    int64    `json:"client_id_issued_at"`
-		TokenEndpointAuth   string   `json:"token_endpoint_auth_method"`
+		ClientID          string   `json:"client_id"`
+		ClientName        string   `json:"client_name,omitempty"`
+		RedirectURIs      []string `json:"redirect_uris"`
+		GrantTypes        []string `json:"grant_types"`
+		ClientIDIssuedAt  int64    `json:"client_id_issued_at"`
+		TokenEndpointAuth string   `json:"token_endpoint_auth_method"`
 	}{
 		ClientID:          c.ClientID,
 		ClientName:        c.ClientName,
@@ -203,7 +204,7 @@ type authorizationCode struct {
 	RedirectURI     string
 	CodeChallenge   string
 	Scope           string
-	UserSubject     string   // Cognito user sub
+	UserSubject     string // Cognito user sub
 	UserEmail       string
 	OrganizationIDs []string // org UUIDs resolved at callback time
 	// CognitoRefreshEnc is the upstream Cognito refresh token, already
@@ -459,6 +460,53 @@ func (s *oauthServer) token(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// revoke implements RFC 7009 Token Revocation. Public clients (PKCE)
+// post token + optional token_type_hint. Unknown tokens still 200 so
+// clients cannot probe the store. We try both stores: mcpSessions for
+// access tokens, the OAuth refresh store for refresh tokens.
+func (s *oauthServer) revoke(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "could not parse form body")
+		return
+	}
+	token := r.PostFormValue("token")
+	if token == "" {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "token is required")
+		return
+	}
+	hint := r.PostFormValue("token_type_hint")
+	hashed := hashTokenB64(token)
+
+	revokeAccess := hint == "" || hint == "access_token"
+	revokeRefresh := hint == "" || hint == "refresh_token"
+	if hint != "" && hint != "access_token" && hint != "refresh_token" {
+		revokeAccess = true
+		revokeRefresh = true
+	}
+
+	if revokeAccess {
+		deleteMCPSession(r.Context(), token)
+	}
+	if revokeRefresh {
+		if _, err := s.store.PopRefresh(r.Context(), hashed); err != nil && !errors.Is(err, ErrNotFound) {
+			log.Printf("oauth/revoke: PopRefresh: %v", err)
+		}
+	}
+	// Hint can be wrong (client thought it was a refresh token). Try the
+	// other store so a confused client still lands a revocation.
+	if hint == "refresh_token" {
+		deleteMCPSession(r.Context(), token)
+	}
+	if hint == "access_token" {
+		if _, err := s.store.PopRefresh(r.Context(), hashed); err != nil && !errors.Is(err, ErrNotFound) {
+			log.Printf("oauth/revoke: PopRefresh: %v", err)
+		}
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+}
+
 // tokenAuthorizationCode handles the initial PKCE code exchange. On
 // success it persists an mcpSession (so platform-api accepts the access
 // token) and, when the session carries an upstream Cognito refresh
@@ -666,16 +714,18 @@ func (s *oauthServer) metadata(w http.ResponseWriter, r *http.Request) {
 	configured := s.cognitoDomain != "" && s.cognitoClientID != ""
 
 	doc := map[string]any{
-		"issuer":                                s.issuer,
-		"authorization_endpoint":                s.issuer + "/oauth/authorize",
-		"token_endpoint":                        s.issuer + "/oauth/token",
-		"registration_endpoint":                 s.issuer + "/oauth/register",
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none"},
-		"scopes_supported":                      []string{defaultScope},
-		"service_documentation":                 "https://platform.buildpulse.io/docs/mcp",
+		"issuer":                                     s.issuer,
+		"authorization_endpoint":                     s.issuer + "/oauth/authorize",
+		"token_endpoint":                             s.issuer + "/oauth/token",
+		"revocation_endpoint":                        s.issuer + "/oauth/revoke",
+		"registration_endpoint":                      s.issuer + "/oauth/register",
+		"response_types_supported":                   []string{"code"},
+		"grant_types_supported":                      []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":           []string{"S256"},
+		"token_endpoint_auth_methods_supported":      []string{"none"},
+		"revocation_endpoint_auth_methods_supported": []string{"none"},
+		"scopes_supported":                           []string{defaultScope},
+		"service_documentation":                      "https://platform.buildpulse.io/docs/mcp",
 	}
 	if !configured {
 		// Surface the misconfiguration in-band so Anthropic Connectors

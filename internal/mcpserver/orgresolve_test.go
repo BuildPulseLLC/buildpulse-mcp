@@ -34,6 +34,7 @@ func orgStub(t *testing.T, orgsJSON string) (*httptest.Server, *string) {
 func TestResolveOrgID_ExplicitOrg_NoLookup(t *testing.T) {
 	// A supplied organization_id is returned verbatim and must NOT trigger a
 	// /api/me/organizations lookup.
+	const orgUUID = "11111111-1111-1111-1111-111111111111"
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/me/organizations" {
@@ -44,15 +45,22 @@ func TestResolveOrgID_ExplicitOrg_NoLookup(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := resolveOrgID(context.Background(), NewClient(srv.URL, "tok"), "  org-abc  ")
+	got, err := resolveOrgID(context.Background(), NewClient(srv.URL, "tok"), "  "+orgUUID+"  ")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "org-abc" {
-		t.Errorf("got %q, want trimmed %q", got, "org-abc")
+	if got != orgUUID {
+		t.Errorf("got %q, want trimmed %q", got, orgUUID)
 	}
 	if called {
 		t.Error("must not call /api/me/organizations when an org is supplied")
+	}
+}
+
+func TestResolveOrgID_RejectsNonUUID(t *testing.T) {
+	_, err := resolveOrgID(context.Background(), NewClient("http://example", "tok"), "not-a-uuid")
+	if err == nil {
+		t.Fatal("non-UUID organization_id must be rejected before any HTTP call")
 	}
 }
 
@@ -116,14 +124,15 @@ func TestTool_MultiOrg_NoOrgID_ErrorsListingOrgs(t *testing.T) {
 // End-to-end: a multi-org session that DOES pass organization_id forwards it
 // and succeeds — no roster error.
 func TestTool_MultiOrg_WithOrgID_ForwardsAndSucceeds(t *testing.T) {
+	const beta = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 	srv, lastFlakyOrg := orgStub(t, `{"organizations":[`+
-		`{"id":"uuid-alpha","name":"Alpha Inc"},`+
-		`{"id":"uuid-beta","name":"Beta LLC"}]}`)
+		`{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","name":"Alpha Inc"},`+
+		`{"id":"`+beta+`","name":"Beta LLC"}]}`)
 
 	cs := newTestServerSession(t, srv)
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "find_flaky_tests",
-		Arguments: map[string]any{"repository": "widgets", "organization_id": "uuid-beta"},
+		Arguments: map[string]any{"repository": "widgets", "organization_id": beta},
 	})
 	if err != nil {
 		t.Fatalf("unexpected protocol error: %v", err)
@@ -131,8 +140,8 @@ func TestTool_MultiOrg_WithOrgID_ForwardsAndSucceeds(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("explicit org must succeed, got error: %s", resultText(res))
 	}
-	if *lastFlakyOrg != "uuid-beta" {
-		t.Errorf("organization_id not forwarded to platform-api; got %q want uuid-beta", *lastFlakyOrg)
+	if *lastFlakyOrg != beta {
+		t.Errorf("organization_id not forwarded to platform-api; got %q want %s", *lastFlakyOrg, beta)
 	}
 }
 

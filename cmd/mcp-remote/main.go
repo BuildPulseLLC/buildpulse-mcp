@@ -49,9 +49,9 @@ import (
 )
 
 const (
-	defaultPort      = "8080"
-	streamableHTTP   = "/mcp"
-	healthPath       = "/health"
+	defaultPort               = "8080"
+	streamableHTTP            = "/mcp"
+	healthPath                = "/health"
 	wellKnownOAuth            = "/.well-known/oauth-authorization-server"
 	wellKnownMCP              = "/.well-known/mcp"
 	wellKnownProtectedResrc   = "/.well-known/oauth-protected-resource"
@@ -70,6 +70,9 @@ func main() {
 	platformURL := os.Getenv("PLATFORM_API_URL")
 	if platformURL == "" {
 		platformURL = mcpserver.DefaultPlatformURL
+	}
+	if err := mcpserver.ValidateHostedPlatformURL(platformURL); err != nil {
+		log.Fatalf("PLATFORM_API_URL: %v", err)
 	}
 
 	// Connect to DocumentDB so the OAuth callback can write mcpSession
@@ -161,6 +164,7 @@ func main() {
 	//   GET  /oauth/authorize                    → redirects to Cognito Hosted UI
 	//   GET  /oauth/callback                     → Cognito redirects back here
 	//   POST /oauth/token                        → code exchange (PKCE)
+	//   POST /oauth/revoke                       → RFC 7009 token revocation
 	//
 	// When COGNITO_DOMAIN / COGNITO_CLIENT_ID are unset, /authorize
 	// returns 501 with a clear message and the metadata document
@@ -176,6 +180,7 @@ func main() {
 	mux.HandleFunc("GET /oauth/authorize", oauth.authorize)
 	mux.HandleFunc("GET /oauth/callback", oauth.callback)
 	mux.HandleFunc("POST /oauth/token", oauth.token)
+	mux.HandleFunc("POST /oauth/revoke", oauth.revoke)
 
 	// RFC 9728 OAuth 2.0 Protected Resource Metadata. Newer MCP
 	// clients (Claude Code, Cursor) probe this endpoint to learn
@@ -183,8 +188,8 @@ func main() {
 	// We point them at our own RFC 8414 metadata document.
 	protectedResource := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"resource":              "https://mcp.buildpulse.io/mcp",
-			"authorization_servers": []string{"https://mcp.buildpulse.io"},
+			"resource":                 "https://mcp.buildpulse.io/mcp",
+			"authorization_servers":    []string{"https://mcp.buildpulse.io"},
 			"bearer_methods_supported": []string{"header"},
 			"resource_documentation":   "https://platform.buildpulse.io/docs/mcp",
 		})

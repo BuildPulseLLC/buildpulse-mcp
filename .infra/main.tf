@@ -175,7 +175,7 @@ resource "aws_ecs_service" "service" {
   # aws_appautoscaling_target.ecs below) takes over after the first
   # apply. lifecycle.ignore_changes keeps Terraform from clobbering
   # the autoscaler.
-  desired_count   = 2
+  desired_count   = var.environment == "production" ? 2 : 1
   launch_type     = "FARGATE"
   name            = var.name
   task_definition = aws_ecs_task_definition.definition.arn
@@ -225,7 +225,7 @@ resource "aws_appautoscaling_target" "ecs" {
   # is still configured for browser-based clients that route through
   # the same ALB.
   max_capacity       = 5
-  min_capacity       = 2
+  min_capacity       = var.environment == "production" ? 2 : 1
   resource_id        = "service/${var.environment}/${aws_ecs_service.service.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"

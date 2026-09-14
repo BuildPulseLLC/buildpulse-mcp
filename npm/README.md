@@ -16,13 +16,20 @@ Source, threat model, and changelog:
 
 ## Quickstart
 
-You need a BuildPulse API token. Create one at <https://buildpulse.io> →
+This package runs the server locally over stdio, which needs a
+BuildPulse API token. Create one at <https://buildpulse.io> →
 Organization Settings → API Tokens. Tokens look like `bp_<64 hex chars>`
 (the older 40-character hex tokens still work).
 
 ```bash
 BUILDPULSE_TOKEN=bp_... npx -y @buildpulse/mcp
 ```
+
+**No token needed for the hosted server.** If your client supports
+remote MCP servers (Claude Code, Claude.ai, ChatGPT, Cursor, VS Code),
+point it at `https://mcp.buildpulse.io/mcp` and sign in with your
+BuildPulse account (Google, GitHub, Bitbucket, Apple, or email). See
+[Hosted transport](#hosted-transport).
 
 Or pin globally:
 
@@ -34,23 +41,19 @@ The package downloads the matching native binary for your platform on
 first install. Supported platforms: macOS (arm64, x64), Linux (arm64,
 x64), Windows (x64). Node 18+.
 
-Prefer not to run anything locally? The same server is hosted at
-`https://mcp.buildpulse.io/mcp` (Streamable HTTP, Bearer token or OAuth)
-— see [Hosted transport](#hosted-transport) below.
-
 ## Configure your client
 
-Every client below reads the same JSON shape. Replace `bp_...` with your
-token.
+Stdio snippets below share one JSON shape; replace `bp_...` with your
+token. Hosted snippets sign you in via SSO and need no token.
 
 ### Claude Code
 
 ```bash
-# local stdio
-claude mcp add buildpulse -e BUILDPULSE_TOKEN=bp_... -- npx -y @buildpulse/mcp
-
-# or the hosted server (no local process; OAuth sign-in)
+# hosted (SSO sign-in, no token, nothing to install)
 claude mcp add --transport http buildpulse https://mcp.buildpulse.io/mcp
+
+# or local stdio (needs a token)
+claude mcp add buildpulse -e BUILDPULSE_TOKEN=bp_... -- npx -y @buildpulse/mcp
 ```
 
 ### Claude Desktop
@@ -130,21 +133,24 @@ client completes the OAuth sign-in.
 ## Hosted transport
 
 The same tools are served over Streamable HTTP at
-`https://mcp.buildpulse.io/mcp`. Authenticate with
-`Authorization: Bearer bp_...` or let the client run OAuth 2.1
-(discovery at `/.well-known/oauth-authorization-server`). Cursor and
-VS Code can point at the URL directly:
+`https://mcp.buildpulse.io/mcp`. By default your client runs OAuth 2.1
+(discovery at `/.well-known/oauth-authorization-server`): it opens the
+BuildPulse login, you sign in with Google, GitHub, Bitbucket, Apple, or
+email, and no API token is involved. Cursor and VS Code can point at the
+URL directly:
 
 ```json
 {
   "mcpServers": {
     "buildpulse": {
-      "url": "https://mcp.buildpulse.io/mcp",
-      "headers": { "Authorization": "Bearer bp_..." }
+      "url": "https://mcp.buildpulse.io/mcp"
     }
   }
 }
 ```
+
+For scripts, CI, or a client without OAuth support, send an API token
+instead by adding `"headers": { "Authorization": "Bearer bp_..." }`.
 
 ## Tools
 

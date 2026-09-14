@@ -96,6 +96,9 @@ jobs:
   publish-npm:
     needs: release
     runs-on: ubuntu-latest
+    # Runs in the `production` GitHub environment so the OIDC token carries
+    # `environment: production`, matching the npm Trusted Publisher entry.
+    environment: production
     # Publishes via npm Trusted Publishing (OIDC): npmjs.com trusts this
     # repo + workflow file, so no NPM_TOKEN secret is needed. Requires
     # the top-level `id-token: write` permission and npm >= 11.5.1 (pinned to the 11 major below).

@@ -12,9 +12,21 @@
     "test-analytics",
     "claude",
     "cursor",
-    "anthropic"
+    "anthropic",
+    "coverage",
+    "ci-cd",
+    "test-flakiness",
+    "mcp-server",
+    "ai-agent",
+    "windsurf",
+    "cline",
+    "vscode",
+    "chatgpt",
+    "devtools",
+    "testing",
+    "github-actions"
   ],
-  "homepage": "https://platform.buildpulse.io/docs",
+  "homepage": "https://platform.buildpulse.io/docs/mcp",
   "bugs": {
     "url": "https://github.com/BuildPulseLLC/buildpulse-mcp/issues"
   },

@@ -1,7 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.BuildPulseLLC/buildpulse-mcp",
-  "description": "BuildPulse CI test analytics for AI agents — flaky tests, coverage, and CI run history.",
+  "title": "BuildPulse",
+  "description": "BuildPulse CI test analytics for AI agents — flaky tests, CI failures, flakiness, and code coverage.",
+  "icons": [
+    {
+      "src": "https://buildpulse.io/icon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ]
+    }
+  ],
   "repository": {
     "url": "https://github.com/BuildPulseLLC/buildpulse-mcp",
     "source": "github"
@@ -19,7 +29,7 @@
       "environmentVariables": [
         {
           "name": "BUILDPULSE_TOKEN",
-          "description": "BuildPulse API token (either `bp_<64-hex>` or legacy 40-hex shape). Get one at buildpulse.io → Organization Settings → API Tokens.",
+          "description": "BuildPulse API token (`bp_<64-hex>`; legacy 40-hex tokens also accepted). Create one at buildpulse.io → Organization Settings → API Tokens.",
           "isRequired": true,
           "isSecret": true
         },
@@ -39,7 +49,7 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer <BuildPulse API token> — accepts either `bp_<64-hex>` or legacy `<40-hex>`. Or use OAuth — see /.well-known/oauth-authorization-server for the discovery doc.",
+          "description": "Bearer <BuildPulse API token> (`bp_<64-hex>`; legacy 40-hex tokens also accepted). Or use OAuth 2.1 — see /.well-known/oauth-authorization-server for the discovery document.",
           "isRequired": true,
           "isSecret": true
         }

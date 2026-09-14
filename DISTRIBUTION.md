@@ -15,16 +15,23 @@ client has different support, so we ship both.
 
 | Channel | Reaches | Effort | Status |
 |---------|---------|--------|--------|
-| npm — `@buildpulse/mcp` | Claude Desktop, Cursor, Cline, Windsurf, Continue, ChatGPT (via MCP-enabled clients), VS Code, anything that spawns stdio | Low — release workflow already wired | ✅ shipped |
-| MCP servers registry (`modelcontextprotocol/servers`) | Discovery — official MCP server list | One PR | 📋 todo |
-| Smithery.ai | Discovery + one-command install for Claude / Cursor / Cline | Submit `smithery.yaml` | 📋 todo |
-| Cursor MCP marketplace | Cursor users (in-app discovery) | Submit PR to `getcursor/mcp` | 📋 todo |
-| **Hosted remote MCP** (Streamable HTTP, Bearer-token auth) | Claude.ai web + mobile, Claude Desktop integrations panel, ChatGPT Connectors | Deploy `cmd/mcp-remote` (built) via `.infra/mcp/` Terraform; CNAME `mcp.buildpulse.io` | 🚧 server + infra ready, awaiting deploy |
-| Anthropic Connectors directory listing | Claude.ai discovery surface | Add OAuth flow to the hosted server, submit to Anthropic Connectors program | 📋 phase 2 |
-| ChatGPT custom-connector listing | ChatGPT Plus / Team / Enterprise discovery surface | OpenAI Connector partner program submission | 📋 phase 2 |
-| Smithery.ai registry | One-line install for any MCP client | `smithery.yaml` (shipped) + submit | 🚧 manifest ready |
+| npm — `@buildpulse/mcp` | Claude Desktop, Cursor, Cline, Windsurf, Continue, VS Code, anything that spawns stdio | Low — release workflow wired | ✅ live — `0.1.5` is `latest` on npm |
+| **Hosted remote MCP** (Streamable HTTP at `https://mcp.buildpulse.io/mcp`, Bearer token **or OAuth 2.1**) | Claude.ai web + mobile, Claude Code, Claude Desktop connectors, ChatGPT connectors, Cursor, VS Code | Deployed from `cmd/mcp-remote` via `.infra/` Terraform | ✅ live — OAuth (PKCE + dynamic client registration, Cognito-backed) is enabled |
+| Official MCP Registry (`registry.modelcontextprotocol.io`) | Discovery in every client that reads the official registry | `server.json` + `mcp-publisher` step in the release workflow | ✅ listed as `io.github.BuildPulseLLC/buildpulse-mcp` (`0.1.5`) |
+| Smithery.ai | Discovery + one-command install for Claude / Cursor / Cline | `smithery.yaml` is in the repo; needs a submission | 📋 manifest ready, **not yet listed** (no server page as of 2026-09-13) |
+| `modelcontextprotocol/servers` community list | Discovery — the canonical README list | One PR | 📋 todo |
+| Cursor MCP directory | Cursor users (in-app discovery) | Submit to Cursor's directory | 📋 todo |
+| Anthropic Connectors directory listing | Claude.ai discovery surface | Submit the hosted server (OAuth is already in place) | 📋 todo |
+| ChatGPT connector listing | ChatGPT Plus / Team / Enterprise discovery surface | OpenAI connector partner program submission | 📋 todo |
 | Homebrew tap | Mac power users who prefer `brew` to `npx` | One-time tap repo | 📋 nice-to-have |
 | Pulse MCP / Composio / Glama | Aggregator discovery | Submit listing | 📋 nice-to-have |
+
+Status verified 2026-09-13 against `npm view @buildpulse/mcp version`,
+`GET https://registry.modelcontextprotocol.io/v0/servers?search=buildpulse`,
+and `GET https://mcp.buildpulse.io/health`. Note that the `mcp-v0.1.6`
+tag produced a GitHub release with binaries but its npm publish step
+failed, so npm and the registry still serve `0.1.5`; see
+[CHANGELOG.md](./CHANGELOG.md).
 
 The npm channel is the workhorse — every modern MCP-aware client today
 knows how to invoke `npx`, and the same install works across all of
@@ -87,7 +94,7 @@ Required GitHub secrets:
 | **VS Code + GitHub Copilot Chat** | Settings → MCP servers | |
 
 The JSON snippet is identical across clients. The
-[`@buildpulse/mcp` README](./mcp-npm/README.md) has copy-paste examples
+[`@buildpulse/mcp` README](./npm/README.md) has copy-paste examples
 for the main three (Claude Desktop, Cursor, Cline).
 
 ### Listing on registries
@@ -119,16 +126,17 @@ These are submit-once-then-forget channels that drive discovery:
 
 ---
 
-## Phase 2 — Hosted remote MCP (server built, deploy pending)
+## Phase 2 — Hosted remote MCP (live at mcp.buildpulse.io)
 
 The local-stdio path can't reach **Claude.ai (web app)** or
 **ChatGPT.com** — those run in the browser and can't spawn a binary.
 The fix is a **remote MCP** served over Streamable HTTP at, e.g.,
 `https://mcp.buildpulse.io`.
 
-The server itself is built ([`cmd/mcp-remote`](./cmd/mcp-remote)), with
-infra Terraform in [`.infra/mcp/`](./.infra/mcp/). What remains is the
-deploy + OAuth.
+The server ([`cmd/mcp-remote`](./cmd/mcp-remote)) is deployed with the
+Terraform in [`.infra/`](./.infra/), and OAuth is live. It also serves a
+public landing page, `robots.txt`, `sitemap.xml`, and `llms.txt` on the
+bare host so people and crawlers can discover it.
 
 ### Architecture
 
@@ -145,8 +153,8 @@ The remote binary `cmd/mcp-remote`:
 
 - Speaks the [Streamable HTTP MCP transport](https://modelcontextprotocol.io/specification/draft/basic/transports#streamable-http)
 - Accepts per-session Bearer-token auth today (`Authorization: Bearer <token>` or the legacy `token <token>` scheme); the token can be either the current `bp_<64-hex>` API token shape or the legacy 40-hex shape
-- Advertises `/.well-known/mcp` for client discovery
-- Has `/.well-known/oauth-authorization-server` scaffolded but stubbed (returns 501 + a hint pointing at Bearer auth) until OAuth lands
+- Advertises `/.well-known/mcp` and RFC 9728 `/.well-known/oauth-protected-resource` for client discovery
+- Serves RFC 8414 metadata at `/.well-known/oauth-authorization-server`, with `/oauth/register` (RFC 7591), `/oauth/authorize`, `/oauth/token` (PKCE + refresh), and `/oauth/revoke` (RFC 7009) backed by Cognito Hosted UI
 - Forwards the caller's token to `platform-api` on every tool call — no new credential to provision
 
 Deployment: ECS Fargate alongside `platform-api` on the existing
@@ -169,10 +177,10 @@ nonroot). Terraform in [`.infra/mcp/`](./.infra/mcp/) mirrors the
 
 Two options, both worth supporting:
 
-1. **OAuth (recommended)** — user clicks "Connect BuildPulse" in
-   Claude.ai, redirects to `app.buildpulse.io` to authorize, lands back
-   with a session token. Best UX, mandatory for Anthropic's Connectors
-   program.
+1. **OAuth (recommended, live)** — user clicks "Connect BuildPulse" in
+   Claude.ai, signs in through the BuildPulse (Cognito) hosted login,
+   and lands back with a short-lived session token. Best UX, mandatory
+   for Anthropic's Connectors program.
 
 2. **Direct token** — for power users / CI, accept a Bearer token in
    the `Authorization` header on the Streamable HTTP transport. The
@@ -185,7 +193,7 @@ Two options, both worth supporting:
 
 When the hosted server is ready:
 
-1. Get on Anthropic's MCP partner waitlist (currently `https://www.anthropic.com/mcp-partners`).
+1. Get on Anthropic's MCP partner waitlist.
 2. Submit our manifest: server URL, OAuth metadata URL, tool inventory, branding.
 3. Pass Anthropic's security/UX review.
 4. Listed in the Connectors directory.

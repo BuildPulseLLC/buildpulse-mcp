@@ -1,9 +1,11 @@
 # Security — BuildPulse MCP
 
-This is the threat model for [DEV-86](https://buildpulse.atlassian.net/browse/DEV-86)
-(P0: [DEV-182](https://buildpulse.atlassian.net/browse/DEV-182)). It describes
-what the server actually is, what we defend, and what we will not do because it
-would break real users.
+This is the threat model for the BuildPulse MCP server. It describes what the
+server actually is, what we defend, and what we will not do because it would
+break real users.
+
+To report a vulnerability, email <security@buildpulse.io>. Please do not open
+a public GitHub issue for security reports.
 
 ## What this MCP is
 
@@ -74,11 +76,11 @@ write/fetch/code-exec tools we do not ship, and they would kneecap triage:
 - **Hiding tool lists or blocking multi-step sessions.** That *is* how
   customers use the product.
 - **Session-kill on "intent change."** Power users chain many reads after a
-  quiet start. Prefer generous rate limits (P1, implemented: 120 tool calls
-  per token per minute, retryable tool result, session stays up) over killing
+  quiet start. Prefer generous rate limits (implemented: 120 tool calls per
+  token per minute, retryable tool result, session stays up) over killing
   the session.
 
-## P1 controls (DEV-189)
+## Rate limits, audit log, and revocation
 
 - **Per-token rate limits.** `internal/mcpserver/policy.go`: 120 tool calls
   per hashed token per rolling minute. Excess calls return a retryable tool
@@ -92,10 +94,11 @@ write/fetch/code-exec tools we do not ship, and they would kneecap triage:
   popped from the OAuth store. Discovery advertises `revocation_endpoint`.
   Public clients; unknown tokens still return 200.
 
-No HITL on read tools.
+## Also deliberately out of scope
+
 - **Aggressive output redaction.** Failure messages and stack traces are the
-  product. Secret-shaped scrubbing is P2 and must be proven against real
-  fixtures first.
+  product. Secret-shaped scrubbing is future work and must be proven against
+  real fixtures first.
 - **A generic egress proxy / DNS-rebinding stack.** There is no user-supplied
   URL fetch. Do not add one.
 

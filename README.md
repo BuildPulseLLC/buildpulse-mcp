@@ -8,8 +8,40 @@
 > VS Code Copilot, and any other MCP-aware AI agent.
 
 [![npm version](https://img.shields.io/npm/v/@buildpulse/mcp.svg)](https://www.npmjs.com/package/@buildpulse/mcp)
+[![npm downloads](https://img.shields.io/npm/dm/@buildpulse/mcp.svg)](https://www.npmjs.com/package/@buildpulse/mcp)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.BuildPulseLLC%2Fbuildpulse--mcp-3e82f7)](https://registry.modelcontextprotocol.io/v0/servers?search=buildpulse)
 [![Install on Smithery](https://img.shields.io/badge/Install-Smithery-blueviolet)](https://smithery.ai)
 [![Docs](https://img.shields.io/badge/Docs-platform.buildpulse.io%2Fdocs%2Fmcp-3e82f7)](https://platform.buildpulse.io/docs/mcp)
+
+## Quickstart
+
+Hosted — nothing to install, OAuth sign-in:
+
+```bash
+claude mcp add --transport http buildpulse https://mcp.buildpulse.io/mcp
+```
+
+Claude.ai or ChatGPT: add a custom connector and paste
+`https://mcp.buildpulse.io/mcp`.
+
+Local stdio — any client that spawns a process:
+
+```bash
+BUILDPULSE_TOKEN=bp_... npx -y @buildpulse/mcp
+```
+
+Get a token at <https://buildpulse.io> → Organization Settings → API
+Tokens. Tokens look like `bp_<64 hex chars>`; the older 40-character
+hex tokens still work.
+
+## Try asking
+
+- "Why is CI red on `web-client`? Show me the failing tests from the last run."
+- "Which tests in `platform-api` have been flakiest this week, and where do they fail?"
+- "How well tested is `agents`? Give me flakiness and coverage."
+- "Which tests failed in more than one of the last 10 runs of `api`?"
+- "Triage the flaky tests in `frontend` and tell me which to quarantine first."
 
 ## Install
 
@@ -29,12 +61,19 @@ Windows x64.
 
 ## Configure
 
-Get a BuildPulse API token at <https://buildpulse.io> → Organization
-Settings → API Tokens.
+Every client below reads the same JSON shape; replace `bp_...` with
+your token.
+
+### Claude Code
+
+```bash
+claude mcp add buildpulse -e BUILDPULSE_TOKEN=bp_... -- npx -y @buildpulse/mcp
+```
 
 ### Claude Desktop
 
-`~/Library/Application Support/Claude/claude_desktop_config.json`:
+`~/Library/Application Support/Claude/claude_desktop_config.json`
+(macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
@@ -42,7 +81,7 @@ Settings → API Tokens.
     "buildpulse": {
       "command": "npx",
       "args": ["-y", "@buildpulse/mcp"],
-      "env": { "BUILDPULSE_TOKEN": "your-buildpulse-api-token" }
+      "env": { "BUILDPULSE_TOKEN": "bp_..." }
     }
   }
 }
@@ -51,12 +90,58 @@ Settings → API Tokens.
 ### Cursor
 
 `.cursor/mcp.json` (per-project) or `~/.cursor/mcp.json` (global):
-same JSON shape.
+same JSON shape. Or point Cursor at the hosted server:
+
+```json
+{
+  "mcpServers": {
+    "buildpulse": {
+      "url": "https://mcp.buildpulse.io/mcp",
+      "headers": { "Authorization": "Bearer bp_..." }
+    }
+  }
+}
+```
+
+### VS Code (GitHub Copilot agent mode)
+
+`.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "buildpulse": {
+      "type": "http",
+      "url": "https://mcp.buildpulse.io/mcp",
+      "headers": { "Authorization": "Bearer bp_..." }
+    }
+  }
+}
+```
+
+For stdio instead, use `"type": "stdio"` with the `command` / `args` /
+`env` fields from the Claude Desktop snippet.
+
+### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json` — same `mcpServers` block as
+Claude Desktop.
+
+### Cline
+
+Cline → MCP Servers → Configure → paste the same `mcpServers` block into
+`cline_mcp_settings.json`.
+
+### ChatGPT
+
+ChatGPT → Settings → Connectors → Create → URL
+`https://mcp.buildpulse.io/mcp`. ChatGPT completes the OAuth sign-in;
+no token to paste.
 
 ### Other clients
 
-Cline, Continue, Windsurf, Zed, and VS Code Copilot all read an
-`mcpServers` block in their respective config files. See the
+Continue, Zed, and anything else MCP-aware takes the same
+`command` / `args` / `env` fields. See the
 [install hub](https://platform.buildpulse.io/docs/mcp) for copy-paste
 snippets per client.
 
@@ -92,8 +177,8 @@ getting confusingly empty results.
 | `list_recent_submissions` | Recent test-result submissions (CI runs) for a repository. |
 | `get_submission_test_results` | Per-test results for one submission (one CI run). |
 | `get_recent_failures` | Tests that failed across the most recent submissions, aggregated by test identity. |
-| `get_repo_flakiness` | Current flakiness % over the last 14 days. |
-| `get_repo_coverage` | Current coverage % from the latest report. |
+| `get_repo_flakiness` | Current flakiness % over the last 14 days. `-1` means no recent results. |
+| `get_repo_coverage` | Current coverage % from the latest uploaded report. `-1` means no report. |
 
 Repo-scoped tools accept an `organization_id` argument — required for
 multi-org sessions, optional (auto-defaulted) for single-org tokens. See
@@ -122,7 +207,11 @@ that support them):
 
 Same tool surface; same prompts; same resources. Pick whichever your
 client supports. The stdio path is universal; the hosted variant is
-the path to Claude.ai web and ChatGPT.
+the path to Claude.ai web and ChatGPT, and authenticates with either a
+Bearer API token or OAuth 2.1 (PKCE + dynamic client registration;
+discovery at `/.well-known/oauth-authorization-server`). The hosted
+server also publishes a landing page, `robots.txt`, `sitemap.xml`, and
+[`llms.txt`](https://mcp.buildpulse.io/llms.txt) on the bare host.
 
 ## Resources
 
@@ -156,13 +245,16 @@ go build -o ./bin/buildpulse-mcp ./cmd/mcp
 go build -o ./bin/buildpulse-mcp-remote ./cmd/mcp-remote
 ```
 
-Requires Go 1.24+.
+Requires Go 1.26+ (see `go.mod`).
 
 ## Run tests
 
 ```bash
-go test ./...
+go test -race ./...
 ```
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development workflow
+and [CHANGELOG.md](./CHANGELOG.md) for release history.
 
 ## License
 
@@ -174,8 +266,4 @@ MIT — see [LICENSE](./LICENSE).
 - [@buildpulse/mcp on npm](https://www.npmjs.com/package/@buildpulse/mcp)
 - [Distribution strategy](./DISTRIBUTION.md) — Claude, OpenAI, Smithery, Cursor publishing details
 - [`/docs/mcp`](https://platform.buildpulse.io/docs/mcp) — branded install hub with copy buttons
-
-## CI / Dependabot
-
-- Push to `main` / `feat/**` / `fix/**` runs build-and-push + deploy (production vs development by branch).
-- Dependabot opens weekly grouped update PRs. This repo is on the **Dependabot weekly rollup** allowlist in `BuildPulseLLC/agents` (`dependabot-rollup` workflow / DEV-85): open Dependabot PRs are folded onto `feat/deps-dependabot-batch-*` so development CI runs before any merge to `main`. See `agents/scripts/dependabot-rollup.md`.
+- [MCP Registry listing](https://registry.modelcontextprotocol.io/v0/servers?search=buildpulse) — `io.github.BuildPulseLLC/buildpulse-mcp`

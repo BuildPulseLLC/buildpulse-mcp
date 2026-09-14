@@ -34,6 +34,17 @@ ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pe
 # plus the RDS CA bundle. Smaller and safer than alpine.
 FROM gcr.io/distroless/static-debian12:nonroot
 
+# OCI image annotations — surfaced by ECR, GHCR, and image scanners.
+# Descriptions here must stay comma-free only if reused as Terraform
+# tags; as a LABEL they are free text.
+LABEL org.opencontainers.image.title="BuildPulse MCP Server" \
+      org.opencontainers.image.description="Hosted Model Context Protocol server for BuildPulse CI test analytics: flaky tests, recent failures, flakiness and coverage as read-only tools." \
+      org.opencontainers.image.source="https://github.com/BuildPulseLLC/buildpulse-mcp" \
+      org.opencontainers.image.url="https://mcp.buildpulse.io" \
+      org.opencontainers.image.documentation="https://platform.buildpulse.io/docs/mcp" \
+      org.opencontainers.image.vendor="BuildPulse" \
+      org.opencontainers.image.licenses="MIT"
+
 COPY --from=build /out/buildpulse-mcp-remote /usr/local/bin/buildpulse-mcp-remote
 COPY --from=build /app/global-bundle.pem /app/global-bundle.pem
 

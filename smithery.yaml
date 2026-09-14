@@ -16,8 +16,9 @@ displayName: BuildPulse
 description: |
   Surface flaky tests, CI run history, and coverage health from
   BuildPulse directly inside Claude, Cursor, ChatGPT, and any
-  MCP-aware agent. Five intent-shaped tools, four guided prompts,
-  and resource templates for repo state.
+  MCP-aware agent. Nine intent-shaped, read-only tools, four guided
+  prompts, and two resource templates for repo state. Also hosted at
+  https://mcp.buildpulse.io/mcp (Streamable HTTP, Bearer token or OAuth).
 homepage: https://platform.buildpulse.io/docs/mcp
 license: MIT
 authors:

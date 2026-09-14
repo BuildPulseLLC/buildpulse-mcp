@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BuildPulse MCP Server</title>
+<meta name="description" content="Hosted Model Context Protocol server for BuildPulse CI test analytics. Nine read-only tools for flaky tests, recent CI failures, per-run results, flakiness and coverage — for Claude, ChatGPT, Cursor, VS Code, Windsurf, and Cline.">
+<link rel="canonical" href="https://mcp.buildpulse.io/">
+<link rel="icon" href="https://buildpulse.io/icon.svg" type="image/svg+xml">
+<meta name="robots" content="index,follow">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BuildPulse">
+<meta property="og:title" content="BuildPulse MCP Server">
+<meta property="og:description" content="Flaky tests, CI failures, flakiness and coverage as MCP tools. Hosted at mcp.buildpulse.io — connect from Claude, ChatGPT, Cursor, VS Code, Windsurf, or Cline.">
+<meta property="og:url" content="https://mcp.buildpulse.io/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="BuildPulse MCP Server">
+<meta name="twitter:description" content="Flaky tests, CI failures, flakiness and coverage as MCP tools. Hosted at mcp.buildpulse.io.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "BuildPulse MCP Server",
+  "alternateName": "@buildpulse/mcp",
+  "description": "Model Context Protocol server for BuildPulse CI test analytics: flaky tests, recent CI failures, per-run test results, flakiness % and code-coverage % as read-only tools for AI agents.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Any",
+  "url": "https://mcp.buildpulse.io/",
+  "downloadUrl": "https://www.npmjs.com/package/@buildpulse/mcp",
+  "installUrl": "https://platform.buildpulse.io/docs/mcp",
+  "softwareHelp": "https://platform.buildpulse.io/docs/mcp",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Organization", "name": "BuildPulse", "url": "https://buildpulse.io" },
+  "sameAs": [
+    "https://github.com/BuildPulseLLC/buildpulse-mcp",
+    "https://www.npmjs.com/package/@buildpulse/mcp",
+    "https://registry.modelcontextprotocol.io/v0/servers?search=buildpulse",
+    "https://platform.buildpulse.io/docs/mcp"
+  ]
+}
+</script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #5c6370; --line: #e3e5e8;
+    --code-bg: #f4f5f7; --accent: #3e82f7; --accent-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1115; --fg: #e6e6e6; --muted: #9aa3ad; --line: #262a31;
+            --code-bg: #171a20; --accent: #6ea3ff; --accent-fg: #0f1115; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 64px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+  .brand { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; }
+  h2 { font-size: 19px; margin: 32px 0 10px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; color: var(--muted); font-weight: 600; }
+  p { margin: 0 0 12px; }
+  a { color: var(--accent); }
+  code { font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px;
+        padding: 12px 14px; overflow-x: auto; margin: 0 0 12px; }
+  pre code { background: none; padding: 0; }
+  .endpoint { font-size: 17px; }
+  ul { padding-left: 20px; margin: 0 0 12px; }
+  li { margin: 4px 0; }
+  .tools li code { font-weight: 600; }
+  .links { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0; list-style: none; }
+  footer { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 16px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <p class="brand">BuildPulse</p>
+  <h1>BuildPulse MCP Server</h1>
+  <p>A hosted <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server that puts BuildPulse CI test analytics inside your AI agent. Nine read-only tools cover flaky-test inventory, recent CI failures, per-run test results, flakiness % and code-coverage % for every repository your token can see. Works with Claude, ChatGPT, Cursor, VS Code, Windsurf, Cline, and any MCP-aware client.</p>
+  <p class="endpoint">Endpoint: <code>https://mcp.buildpulse.io/mcp</code></p>
+</header>
+
+<h2>Connect</h2>
+<p>You need a BuildPulse API token (<code>bp_…</code>) from <a href="https://buildpulse.io">buildpulse.io</a> → Organization Settings → API Tokens, or sign in with OAuth when your client offers it.</p>
+
+<h3>Claude Code</h3>
+<pre><code>claude mcp add --transport http buildpulse https://mcp.buildpulse.io/mcp</code></pre>
+
+<h3>Claude.ai and ChatGPT connectors</h3>
+<p>Add a custom connector and paste <code>https://mcp.buildpulse.io/mcp</code>. Both clients complete the OAuth sign-in for you.</p>
+
+<h3>Cursor (<code>.cursor/mcp.json</code>)</h3>
+<pre><code>{
+  "mcpServers": {
+    "buildpulse": {
+      "url": "https://mcp.buildpulse.io/mcp",
+      "headers": { "Authorization": "Bearer bp_YOUR_TOKEN" }
+    }
+  }
+}</code></pre>
+
+<h3>VS Code (<code>.vscode/mcp.json</code>)</h3>
+<pre><code>{
+  "servers": {
+    "buildpulse": {
+      "type": "http",
+      "url": "https://mcp.buildpulse.io/mcp",
+      "headers": { "Authorization": "Bearer bp_YOUR_TOKEN" }
+    }
+  }
+}</code></pre>
+
+<h3>Local stdio (Claude Desktop, Windsurf, Cline, Continue, Zed)</h3>
+<pre><code>{
+  "mcpServers": {
+    "buildpulse": {
+      "command": "npx",
+      "args": ["-y", "@buildpulse/mcp"],
+      "env": { "BUILDPULSE_TOKEN": "bp_YOUR_TOKEN" }
+    }
+  }
+}</code></pre>
+
+<h2>Tools</h2>
+<ul class="tools">
+  <li><code>list_my_organizations</code> — every organization the token can access; returns the <code>id</code> to pass as <code>organization_id</code>.</li>
+  <li><code>list_repositories</code> — repositories BuildPulse monitors for an organization.</li>
+  <li><code>find_flaky_tests</code> — a repository's flaky-test inventory over the last 14 days, by disruptiveness or recency.</li>
+  <li><code>get_test_history</code> — recent disruption events for one test, with build URL and commit SHA.</li>
+  <li><code>list_recent_submissions</code> — the most recent CI runs that uploaded results for a repository.</li>
+  <li><code>get_submission_test_results</code> — per-test results for one CI run; filter to failures.</li>
+  <li><code>get_recent_failures</code> — every test that failed across the last N CI runs, aggregated by test identity.</li>
+  <li><code>get_repo_flakiness</code> — current flakiness % for a repository (last 14 days).</li>
+  <li><code>get_repo_coverage</code> — current code-coverage % from the latest report.</li>
+</ul>
+<p>Sessions with access to more than one organization pass <code>organization_id</code> on every repo-scoped call; the server never guesses which tenant you meant. Four guided prompts ship alongside: <code>triage_flaky_tests</code>, <code>ci_health_check</code>, <code>explain_test_failure</code>, <code>whats_red</code>.</p>
+
+<h2>Try asking</h2>
+<ul>
+  <li>“Why is CI red on <code>web-client</code>? Show me the failing tests from the last run.”</li>
+  <li>“Which tests in <code>platform-api</code> have been flakiest this week, and where do they fail?”</li>
+  <li>“How well tested is <code>agents</code>? Give me flakiness and coverage.”</li>
+  <li>“Which tests failed in more than one of the last 10 runs of <code>test-reporter-lambdas</code>?”</li>
+</ul>
+
+<h2>Links</h2>
+<ul class="links">
+  <li><a href="https://platform.buildpulse.io/docs/mcp">Install docs</a></li>
+  <li><a href="https://platform.buildpulse.io/openapi.yaml">OpenAPI</a></li>
+  <li><a href="https://platform.buildpulse.io/llms.txt">Platform API llms.txt</a></li>
+  <li><a href="/llms.txt">This server's llms.txt</a></li>
+  <li><a href="https://github.com/BuildPulseLLC/buildpulse-mcp">GitHub</a></li>
+  <li><a href="https://www.npmjs.com/package/@buildpulse/mcp">npm</a></li>
+  <li><a href="https://registry.modelcontextprotocol.io/v0/servers?search=buildpulse">MCP Registry</a></li>
+  <li><a href="https://buildpulse.io">buildpulse.io</a></li>
+</ul>
+
+<footer>
+  <p>Read-only by design; see the <a href="https://github.com/BuildPulseLLC/buildpulse-mcp/blob/main/SECURITY.md">threat model</a>. Questions: <a href="mailto:support@buildpulse.io">support@buildpulse.io</a>. MIT licensed.</p>
+</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,48 @@
+# BuildPulse MCP Server
+
+> Model Context Protocol server for BuildPulse CI test analytics. Nine read-only tools that surface flaky tests, recent CI failures, per-run test results, flakiness %, and code-coverage % for a repository — callable from Claude, ChatGPT, Cursor, VS Code, Windsurf, Cline, and any MCP-aware agent.
+
+The server is hosted at `https://mcp.buildpulse.io/mcp` (Streamable HTTP) and published to npm as `@buildpulse/mcp` (stdio). Both transports expose the same nine tools, four prompts, and two resource templates. Authentication is a BuildPulse API token (`bp_<64-hex>`; legacy 40-hex tokens also work) sent as `Authorization: Bearer <token>`, or OAuth 2.1 with PKCE and dynamic client registration for hosted clients. Every tool is read-only and scoped to the organizations the token can access.
+
+## Connect
+
+- [Hosted endpoint](https://mcp.buildpulse.io/mcp): Streamable HTTP. Claude Code: `claude mcp add --transport http buildpulse https://mcp.buildpulse.io/mcp`. Claude.ai and ChatGPT connectors: paste the URL.
+- [OAuth discovery](https://mcp.buildpulse.io/.well-known/oauth-authorization-server): RFC 8414 metadata; dynamic client registration at /oauth/register.
+- [npm: @buildpulse/mcp](https://www.npmjs.com/package/@buildpulse/mcp): local stdio transport. Run `npx -y @buildpulse/mcp` with `BUILDPULSE_TOKEN` set.
+- [MCP Registry: io.github.BuildPulseLLC/buildpulse-mcp](https://registry.modelcontextprotocol.io/v0/servers?search=buildpulse): official registry listing.
+- [Source on GitHub](https://github.com/BuildPulseLLC/buildpulse-mcp): Go, MIT licensed.
+
+## Tools
+
+- list_my_organizations: every organization the token can access; returns the `id` UUID used as `organization_id` on repo-scoped calls.
+- list_repositories: repositories BuildPulse monitors for an organization.
+- find_flaky_tests: a repository's flaky-test inventory over the last 14 days, sorted by disruptiveness or recency.
+- get_test_history: recent disruption events for one test, with build URL and commit SHA.
+- list_recent_submissions: the most recent CI runs that uploaded results for a repository.
+- get_submission_test_results: per-test results for one CI run; filter to failures.
+- get_recent_failures: every test that failed across the last N CI runs, aggregated by test identity.
+- get_repo_flakiness: current flakiness % for a repository (last 14 days).
+- get_repo_coverage: current code-coverage % from the latest report.
+
+Multi-tenant rule: if `list_my_organizations` returns two or more organizations, pass `organization_id` on every repo-scoped call. The server does not guess; omitting it returns an error that lists the accessible organizations and their UUIDs.
+
+## Prompts
+
+- triage_flaky_tests: rank a repository's flaky tests and propose next steps.
+- ci_health_check: flakiness + coverage snapshot for a repository.
+- explain_test_failure: walk through one test's recent failures.
+- whats_red: what broke CI on the most recent runs.
+
+## Documentation
+
+- [MCP install hub](https://platform.buildpulse.io/docs/mcp): per-client setup for Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Cline, and ChatGPT.
+- [Platform API llms.txt](https://platform.buildpulse.io/llms.txt): the REST API these tools call.
+- [Platform API OpenAPI](https://platform.buildpulse.io/openapi.yaml): machine-readable API contract.
+- [Security and threat model](https://github.com/BuildPulseLLC/buildpulse-mcp/blob/main/SECURITY.md): read-only surface, tenant isolation, rate limits, audit log.
+
+## BuildPulse
+
+- [BuildPulse](https://buildpulse.io): CI test analytics — flaky-test detection, quarantine, code coverage, engineering metrics, and self-hosted CI runners.
+- [Products](https://buildpulse.io/products): what BuildPulse ships.
+- [Pricing](https://buildpulse.io/pricing): plans; API and MCP access is included on paid plans.
+- [Support](mailto:support@buildpulse.io): support@buildpulse.io.

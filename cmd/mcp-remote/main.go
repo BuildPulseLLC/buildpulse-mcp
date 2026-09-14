@@ -21,8 +21,13 @@
 // implementation detail of the OAuth flow, not a constraint on the
 // caller's chosen API token.
 //
-// OAuth-based auth (required for Anthropic's Connectors program) is
-// scaffolded but not yet enabled — see /oauth/* routes.
+// OAuth 2.1 (PKCE + dynamic client registration, delegating to Cognito
+// Hosted UI) is served from the /oauth/* routes — see oauth.go.
+//
+// Besides the MCP transport the binary also serves a small set of
+// public, unauthenticated documentation routes (GET /, /robots.txt,
+// /sitemap.xml, /llms.txt) so the bare host is useful to people and
+// crawlers — see public.go.
 //
 // Configuration:
 //
@@ -83,6 +88,10 @@ func main() {
 	initMongo(context.Background())
 
 	mux := http.NewServeMux()
+
+	// Public documentation surfaces: GET / (landing page), /robots.txt,
+	// /sitemap.xml, /llms.txt. Exact-match patterns; see public.go.
+	registerPublicRoutes(mux)
 
 	// hostname is captured at startup so /health and other endpoints can
 	// echo back which ECS task served the request — used to verify ALB

@@ -1,0 +1,26 @@
+# BuildPulse MCP Server — https://mcp.buildpulse.io
+# Everything public here is documentation. The MCP endpoint itself
+# (/mcp) requires an Authorization header and is not crawlable.
+
+User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+Sitemap: https://mcp.buildpulse.io/sitemap.xml

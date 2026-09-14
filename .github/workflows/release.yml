@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     # Publishes via npm Trusted Publishing (OIDC): npmjs.com trusts this
     # repo + workflow file, so no NPM_TOKEN secret is needed. Requires
-    # the top-level `id-token: write` permission and npm >= 11.5.1.
+    # the top-level `id-token: write` permission and npm >= 11.5.1 (pinned to the 11 major below).
     steps:
       - uses: actions/checkout@v7
 
@@ -109,7 +109,7 @@ jobs:
 
       - name: Upgrade npm for trusted publishing
         run: |
-          npm install -g npm@latest
+          npm install -g npm@11
           npm --version
 
       - name: Set package version from tag

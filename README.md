@@ -16,24 +16,27 @@
 
 ## Quickstart
 
-Hosted — nothing to install, OAuth sign-in:
+**Hosted (recommended)** — nothing to install, no API token. Your client
+opens a browser and you sign in with your BuildPulse account (Google,
+GitHub, Bitbucket, Apple, or email):
 
 ```bash
 claude mcp add --transport http buildpulse https://mcp.buildpulse.io/mcp
 ```
 
-Claude.ai or ChatGPT: add a custom connector and paste
-`https://mcp.buildpulse.io/mcp`.
+Claude.ai, ChatGPT, Cursor, VS Code: add `https://mcp.buildpulse.io/mcp`
+as an HTTP/remote MCP server and complete the sign-in when prompted.
 
-Local stdio — any client that spawns a process:
+**Local stdio** — for clients that only spawn a process, or for scripts
+and CI where a browser sign-in is not possible. This path needs an API
+token:
 
 ```bash
 BUILDPULSE_TOKEN=bp_... npx -y @buildpulse/mcp
 ```
 
-Get a token at <https://buildpulse.io> → Organization Settings → API
-Tokens. Tokens look like `bp_<64 hex chars>`; the older 40-character
-hex tokens still work.
+See [Authentication](#authentication) for where tokens come from and
+when you need one.
 
 ## Try asking
 
@@ -59,12 +62,34 @@ The package downloads the matching native binary for your platform on
 first install. Supported platforms: macOS arm64/x64, Linux arm64/x64,
 Windows x64.
 
+## Authentication
+
+There are two ways to authenticate, and most people only need the first.
+
+| | How you sign in | Needs an API token? | Use it for |
+|---|---|---|---|
+| **Hosted SSO** (`https://mcp.buildpulse.io/mcp`) | OAuth 2.1: your client opens the BuildPulse login (Google, GitHub, Bitbucket, Apple, or email) and stores a session for you | **No** | Claude Code, Claude.ai, ChatGPT, Cursor, VS Code, and any client that supports remote MCP servers with OAuth |
+| **API token** | `BUILDPULSE_TOKEN=bp_...` for stdio, or an `Authorization: Bearer bp_...` header against the hosted URL | Yes | Local `npx` stdio, clients without OAuth support, scripts and CI |
+
+Get a token at <https://buildpulse.io> → Organization Settings → API
+Tokens. Tokens look like `bp_<64 hex chars>`; the older 40-character
+hex tokens still work. A token grants access to the same organizations
+your account does.
+
 ## Configure
 
-Every client below reads the same JSON shape; replace `bp_...` with
-your token.
+Hosted snippets sign you in via SSO. Stdio snippets need
+`BUILDPULSE_TOKEN`; replace `bp_...` with your token.
 
 ### Claude Code
+
+Hosted (SSO, no token):
+
+```bash
+claude mcp add --transport http buildpulse https://mcp.buildpulse.io/mcp
+```
+
+Stdio (token):
 
 ```bash
 claude mcp add buildpulse -e BUILDPULSE_TOKEN=bp_... -- npx -y @buildpulse/mcp
@@ -89,38 +114,42 @@ claude mcp add buildpulse -e BUILDPULSE_TOKEN=bp_... -- npx -y @buildpulse/mcp
 
 ### Cursor
 
-`.cursor/mcp.json` (per-project) or `~/.cursor/mcp.json` (global):
-same JSON shape. Or point Cursor at the hosted server:
+`.cursor/mcp.json` (per-project) or `~/.cursor/mcp.json` (global).
+Hosted with SSO (Cursor prompts you to sign in the first time):
 
 ```json
 {
   "mcpServers": {
     "buildpulse": {
-      "url": "https://mcp.buildpulse.io/mcp",
-      "headers": { "Authorization": "Bearer bp_..." }
+      "url": "https://mcp.buildpulse.io/mcp"
     }
   }
 }
 ```
 
+To use a token instead of signing in, add
+`"headers": { "Authorization": "Bearer bp_..." }`. For stdio, use the
+`command` / `args` / `env` shape from the Claude Desktop snippet.
+
 ### VS Code (GitHub Copilot agent mode)
 
-`.vscode/mcp.json`:
+`.vscode/mcp.json`. Hosted with SSO (VS Code opens the sign-in when
+the server first starts):
 
 ```json
 {
   "servers": {
     "buildpulse": {
       "type": "http",
-      "url": "https://mcp.buildpulse.io/mcp",
-      "headers": { "Authorization": "Bearer bp_..." }
+      "url": "https://mcp.buildpulse.io/mcp"
     }
   }
 }
 ```
 
-For stdio instead, use `"type": "stdio"` with the `command` / `args` /
-`env` fields from the Claude Desktop snippet.
+To use a token instead, add `"headers": { "Authorization": "Bearer bp_..." }`.
+For stdio, use `"type": "stdio"` with the `command` / `args` / `env`
+fields from the Claude Desktop snippet.
 
 ### Windsurf
 
@@ -135,8 +164,13 @@ Cline → MCP Servers → Configure → paste the same `mcpServers` block into
 ### ChatGPT
 
 ChatGPT → Settings → Connectors → Create → URL
-`https://mcp.buildpulse.io/mcp`. ChatGPT completes the OAuth sign-in;
+`https://mcp.buildpulse.io/mcp`. ChatGPT completes the SSO sign-in;
 no token to paste.
+
+### Claude.ai
+
+Settings → Connectors → Add custom connector → URL
+`https://mcp.buildpulse.io/mcp`. Sign in when prompted; no token.
 
 ### Other clients
 
@@ -207,9 +241,9 @@ that support them):
 
 Same tool surface; same prompts; same resources. Pick whichever your
 client supports. The stdio path is universal; the hosted variant is
-the path to Claude.ai web and ChatGPT, and authenticates with either a
-Bearer API token or OAuth 2.1 (PKCE + dynamic client registration;
-discovery at `/.well-known/oauth-authorization-server`). The hosted
+the path to Claude.ai web and ChatGPT, and authenticates with OAuth 2.1
+SSO by default (PKCE + dynamic client registration; discovery at
+`/.well-known/oauth-authorization-server`) or a Bearer API token. The hosted
 server also publishes a landing page, `robots.txt`, `sitemap.xml`, and
 [`llms.txt`](https://mcp.buildpulse.io/llms.txt) on the bare host.
 
@@ -225,7 +259,7 @@ state into context without a tool call:
 
 | Variable | Required | Default |
 |---|---|---|
-| `BUILDPULSE_TOKEN` | yes | — |
+| `BUILDPULSE_TOKEN` | stdio only (hosted uses SSO) | — |
 | `PLATFORM_API_URL` | no | `https://platform.buildpulse.io` |
 
 The **hosted** server (`mcp-remote`) will refuse to start unless

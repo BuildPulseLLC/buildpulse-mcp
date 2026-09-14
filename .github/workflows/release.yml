@@ -96,50 +96,39 @@ jobs:
   publish-npm:
     needs: release
     runs-on: ubuntu-latest
+    # Publishes via npm Trusted Publishing (OIDC): npmjs.com trusts this
+    # repo + workflow file, so no NPM_TOKEN secret is needed. Requires
+    # the top-level `id-token: write` permission and npm >= 11.5.1.
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check for NPM_TOKEN
-        id: token
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "::warning::NPM_TOKEN secret is not configured — skipping npm publish."
-            echo "::warning::Binaries are still attached to the GitHub Release."
-            echo "::warning::To enable publishing, add an Automation token from npmjs.com → Access Tokens to repo Settings → Secrets → Actions."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/setup-node@v7
-        if: steps.token.outputs.skip == 'false'
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
       - name: Set package version from tag
-        if: steps.token.outputs.skip == 'false'
         working-directory: npm
         run: |
           # Strip the "mcp-v" prefix from the tag.
           version="${GITHUB_REF_NAME#mcp-v}"
           npm version "$version" --no-git-tag-version --allow-same-version
 
-      - name: Publish (with provenance)
-        if: steps.token.outputs.skip == 'false'
+      - name: Publish (OIDC trusted publishing, with provenance)
         working-directory: npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # The postinstall calls install.js which would try to download
           # the just-published GitHub release. Skip during publish — npm
           # only needs the source files in the tarball, not the binary.
           BUILDPULSE_MCP_SKIP_INSTALL: "1"
-        # --provenance attaches a Sigstore attestation linking this
-        # tarball to its GitHub Actions source workflow. npm only
-        # accepts provenance from PUBLIC source repos — this one is
-        # public, so it works.
+        # No NODE_AUTH_TOKEN: npm exchanges the GitHub OIDC token for a
+        # short-lived publish credential. --provenance attaches a Sigstore
+        # attestation linking this tarball to its source workflow.
         run: npm publish --provenance --access public
 
   publish-mcp-registry:

@@ -183,6 +183,52 @@ type consentView struct {
 	DestLabel  string
 }
 
+// consentCSP builds the consent page's policy.
+//
+// form-action needs care. Browsers enforce it not only on the form's action
+// but on any redirect that FOLLOWS the submission, so a bare `form-action
+// 'self'` silently kills the whole flow: the POST to /oauth/consent is
+// same-origin and allowed, then the 302 carrying the authorization code to
+// the client's redirect URI is blocked. The user sees the Allow button do
+// nothing, with only a console violation to explain it — and since every
+// local MCP client redirects to http://localhost:<port>, that is every
+// customer.
+//
+// So the client's own redirect origin is allowed explicitly. That keeps the
+// directive meaningful (submissions can still only reach us or the one
+// destination already shown on the page) instead of dropping it.
+func consentCSP(redirectURI string) string {
+	const base = "frame-ancestors 'none'; default-src 'none'; style-src 'unsafe-inline'"
+
+	origin := formActionOrigin(redirectURI)
+	if origin == "" {
+		// Unparseable destination: omit form-action rather than ship a
+		// policy that breaks the redirect. The redirect URI was already
+		// validated at registration and re-checked at approval.
+		return base
+	}
+	return base + "; form-action 'self' " + origin
+}
+
+// formActionOrigin reduces a redirect URI to the source expression CSP wants:
+// scheme://host[:port] for http(s), or just the scheme for the private-use
+// schemes native apps register (RFC 8252).
+func formActionOrigin(redirectURI string) string {
+	u, err := url.Parse(redirectURI)
+	if err != nil || u.Scheme == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		if u.Host == "" {
+			return ""
+		}
+		return u.Scheme + "://" + u.Host // Host retains the port
+	default:
+		return u.Scheme + ":"
+	}
+}
+
 // renderConsent writes the interstitial. The page carries no cookie and no
 // ambient authority — the only thing that authorizes the subsequent POST is
 // the single-use ConsentKey in the form — but it is still framed-denied so a
@@ -191,7 +237,7 @@ func renderConsent(w http.ResponseWriter, v consentView) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'; default-src 'none'; style-src 'unsafe-inline'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", consentCSP(v.RedirectURI))
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if err := consentPage.Execute(w, v); err != nil {
 		log.Printf("consent: render failed: %v", err)

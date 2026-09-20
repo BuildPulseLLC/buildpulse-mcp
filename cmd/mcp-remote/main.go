@@ -87,129 +87,17 @@ func main() {
 	// authenticate against platform-api. See cmd/mcp-remote/mongo.go.
 	initMongo(context.Background())
 
-	mux := http.NewServeMux()
-
-	// Public documentation surfaces: GET / (landing page), /robots.txt,
-	// /sitemap.xml, /llms.txt. Exact-match patterns; see public.go.
-	registerPublicRoutes(mux)
-
-	// hostname is captured at startup so /health and other endpoints can
-	// echo back which ECS task served the request — used to verify ALB
-	// target-group stickiness from the outside. On Fargate this is
-	// `ip-10-0-x-y` derived from the task ENI.
-	hostname, _ := os.Hostname()
-	mux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Instance-Id", hostname)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "instance": hostname})
-	})
-
-	// The Streamable HTTP MCP transport. The Go SDK's
-	// NewStreamableHTTPHandler asks us for a *Server per inbound
-	// request — we use that hook to bind the request's Authorization
-	// token to the server's outbound calls.
-	//
-	// Stateless: true skips Mcp-Session-Id validation and treats every
-	// POST as a fresh, self-contained request. This is the right mode
-	// for BuildPulse because:
-	//   1. Every tool is read-only against platform-api; we never need
-	//      server->client requests (the only thing Stateless mode
-	//      rejects — see the StreamableHTTPOptions godoc).
-	//   2. Without per-session in-process state, the ALB can freely
-	//      round-robin requests across ECS tasks. This is what lets
-	//      mcp-remote run min/max_capacity=2 (or more) safely; cookie
-	//      stickiness still works for browser clients but is no longer
-	//      load-bearing for SDK clients that don't keep a cookie jar.
-	// OAuth-flow state (clients, codes, pending) is separately persisted
-	// to DynamoDB via store_dynamo.go, so the OAuth surface area is also
-	// task-independent.
-	streamable := mcp.NewStreamableHTTPHandler(
-		func(r *http.Request) *mcp.Server {
-			token, err := extractToken(r.Header.Get("Authorization"))
-			if err != nil {
-				// Unreachable in practice: requireBearer rejects these
-				// before the SDK is handed the request, because the SDK
-				// answers a nil server with 400 and an MCP client needs
-				// a 401 challenge to know it should authenticate. Kept
-				// as defence in depth if the wrapper is ever dropped.
-				log.Printf("rejecting MCP session (unchallenged path): %v (remote=%s)", err, r.RemoteAddr)
-				return nil
-			}
-			client := mcpserver.NewClient(platformURL, token)
-			return mcpserver.New(client)
-		},
-		&mcp.StreamableHTTPOptions{Stateless: true},
-	)
-	guarded := requireBearer(streamable)
-	mux.Handle("/mcp", guarded)
-	mux.Handle("/mcp/", guarded)
-
-	// MCP discovery — clients (Claude.ai's Connector picker, etc.)
-	// fetch /.well-known/mcp to learn what the server offers.
-	mux.HandleFunc("GET "+wellKnownMCP, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{
-			"server": map[string]any{
-				"name":    mcpserver.ServerImplementation.Name,
-				"title":   mcpserver.ServerImplementation.Title,
-				"version": mcpserver.ServerImplementation.Version,
-			},
-			"endpoints": map[string]string{
-				"streamable_http": "/mcp",
-			},
-			"authentication": map[string]any{
-				"types": []string{"bearer"},
-				"bearer": map[string]any{
-					"header":      "Authorization",
-					"scheme":      "Bearer",
-					"description": "BuildPulse API token (created at https://buildpulse.io). Accepted shapes: `bp_<64-hex>` (current) or `<40-hex>` (legacy).",
-				},
-			},
-			"documentation": "https://platform.buildpulse.io/docs/mcp",
-		})
-	})
-
-	// OAuth 2.1 authorization server. See oauth.go for the full
-	// design. The flow is:
-	//   /.well-known/oauth-authorization-server  → RFC 8414 metadata
-	//   POST /oauth/register                     → RFC 7591 dynamic registration
-	//   GET  /oauth/authorize                    → redirects to Cognito Hosted UI
-	//   GET  /oauth/callback                     → Cognito redirects back here
-	//   POST /oauth/token                        → code exchange (PKCE)
-	//   POST /oauth/revoke                       → RFC 7009 token revocation
-	//
-	// When COGNITO_DOMAIN / COGNITO_CLIENT_ID are unset, /authorize
-	// returns 501 with a clear message and the metadata document
-	// surfaces `x-buildpulse-oauth-status=unconfigured`. Bearer-token
-	// auth on the MCP endpoint continues to work either way.
-	//
 	// Store: DynamoDB when the three OAUTH_* table names are set,
 	// in-memory otherwise. See store.go for the design.
 	store := buildOAuthStore(context.Background())
 	oauth := newOAuthServer(store, buildCrypter(context.Background()))
-	mux.HandleFunc("GET "+wellKnownOAuth, oauth.metadata)
-	mux.HandleFunc("POST /oauth/register", oauth.register)
-	mux.HandleFunc("GET /oauth/authorize", oauth.authorize)
-	mux.HandleFunc("GET /oauth/callback", oauth.callback)
-	mux.HandleFunc("POST /oauth/consent", oauth.consent)
-	mux.HandleFunc("POST /oauth/token", oauth.token)
-	mux.HandleFunc("POST /oauth/revoke", oauth.revoke)
+	hostname, _ := os.Hostname()
 
-	// RFC 9728 OAuth 2.0 Protected Resource Metadata. Newer MCP
-	// clients (Claude Code, Cursor) probe this endpoint to learn
-	// which authorization server protects the `/mcp` resource.
-	// We point them at our own RFC 8414 metadata document.
-	protectedResource := func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{
-			"resource":                 "https://mcp.buildpulse.io/mcp",
-			"authorization_servers":    []string{"https://mcp.buildpulse.io"},
-			"bearer_methods_supported": []string{"header"},
-			"resource_documentation":   "https://platform.buildpulse.io/docs/mcp",
-		})
-	}
-	mux.HandleFunc("GET "+wellKnownProtectedResrc, protectedResource)
-	mux.HandleFunc("GET "+wellKnownProtectedRsrcMCP, protectedResource)
-
-	handler := withRequestID(withLogging(withCORS(mux)))
+	handler := newHandler(serverDeps{
+		platformURL: platformURL,
+		hostname:    hostname,
+		oauth:       oauth,
+	})
 
 	srv := &http.Server{
 		Addr:         ":" + port,
@@ -359,4 +247,145 @@ func (s *statusRecorder) WriteHeader(code int) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// serverDeps is what newHandler needs from the process environment.
+// Bundling it means the routing table can be built in a test without
+// DocumentDB, DynamoDB or Cognito.
+type serverDeps struct {
+	// platformURL is the upstream platform-api the MCP tools call.
+	platformURL string
+	// hostname is captured at startup so /health and other endpoints can
+	// echo back which ECS task served the request — used to verify ALB
+	// target-group stickiness from the outside. On Fargate this is
+	// `ip-10-0-x-y` derived from the task ENI.
+	hostname string
+	// oauth owns the authorization-server endpoints.
+	oauth *oauthServer
+}
+
+// newHandler builds the complete routing table plus the middleware chain.
+//
+// This exists as its own function so tests exercise the same wiring the
+// binary serves — in particular that /mcp is behind requireBearer. Asserting
+// that on a hand-built handler would prove nothing: the bug worth catching is
+// someone registering the raw SDK handler on /mcp again, which is only
+// visible in the real table.
+func newHandler(d serverDeps) http.Handler {
+	mux := http.NewServeMux()
+
+	// Public documentation surfaces: GET / (landing page), /robots.txt,
+	// /sitemap.xml, /llms.txt. Exact-match patterns; see public.go.
+	registerPublicRoutes(mux)
+
+	mux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Instance-Id", d.hostname)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "instance": d.hostname})
+	})
+
+	// The Streamable HTTP MCP transport. The Go SDK's
+	// NewStreamableHTTPHandler asks us for a *Server per inbound
+	// request — we use that hook to bind the request's Authorization
+	// token to the server's outbound calls.
+	//
+	// Stateless: true skips Mcp-Session-Id validation and treats every
+	// POST as a fresh, self-contained request. This is the right mode
+	// for BuildPulse because:
+	//   1. Every tool is read-only against platform-api; we never need
+	//      server->client requests (the only thing Stateless mode
+	//      rejects — see the StreamableHTTPOptions godoc).
+	//   2. Without per-session in-process state, the ALB can freely
+	//      round-robin requests across ECS tasks. This is what lets
+	//      mcp-remote run min/max_capacity=2 (or more) safely; cookie
+	//      stickiness still works for browser clients but is no longer
+	//      load-bearing for SDK clients that don't keep a cookie jar.
+	// OAuth-flow state (clients, codes, pending) is separately persisted
+	// to DynamoDB via store_dynamo.go, so the OAuth surface area is also
+	// task-independent.
+	streamable := mcp.NewStreamableHTTPHandler(
+		func(r *http.Request) *mcp.Server {
+			token, err := extractToken(r.Header.Get("Authorization"))
+			if err != nil {
+				// Unreachable in practice: requireBearer rejects these
+				// before the SDK is handed the request, because the SDK
+				// answers a nil server with 400 and an MCP client needs
+				// a 401 challenge to know it should authenticate. Kept
+				// as defence in depth if the wrapper is ever dropped.
+				log.Printf("rejecting MCP session (unchallenged path): %v (remote=%s)", err, r.RemoteAddr)
+				return nil
+			}
+			client := mcpserver.NewClient(d.platformURL, token)
+			return mcpserver.New(client)
+		},
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)
+	guarded := requireBearer(streamable)
+	mux.Handle("/mcp", guarded)
+	mux.Handle("/mcp/", guarded)
+
+	// MCP discovery — clients (Claude.ai's Connector picker, etc.)
+	// fetch /.well-known/mcp to learn what the server offers.
+	mux.HandleFunc("GET "+wellKnownMCP, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"server": map[string]any{
+				"name":    mcpserver.ServerImplementation.Name,
+				"title":   mcpserver.ServerImplementation.Title,
+				"version": mcpserver.ServerImplementation.Version,
+			},
+			"endpoints": map[string]string{
+				"streamable_http": "/mcp",
+			},
+			"authentication": map[string]any{
+				"types": []string{"bearer"},
+				"bearer": map[string]any{
+					"header":      "Authorization",
+					"scheme":      "Bearer",
+					"description": "BuildPulse API token (created at https://buildpulse.io). Accepted shapes: `bp_<64-hex>` (current) or `<40-hex>` (legacy).",
+				},
+			},
+			"documentation": "https://platform.buildpulse.io/docs/mcp",
+		})
+	})
+
+	// OAuth 2.1 authorization server. See oauth.go for the full
+	// design. The flow is:
+	//   /.well-known/oauth-authorization-server  → RFC 8414 metadata
+	//   POST /oauth/register                     → RFC 7591 dynamic registration
+	//   GET  /oauth/authorize                    → redirects to Cognito Hosted UI
+	//   GET  /oauth/callback                     → Cognito redirects back here
+	//   POST /oauth/token                        → code exchange (PKCE)
+	//   POST /oauth/revoke                       → RFC 7009 token revocation
+	//
+	// When COGNITO_DOMAIN / COGNITO_CLIENT_ID are unset, /authorize
+	// returns 501 with a clear message and the metadata document
+	// surfaces `x-buildpulse-oauth-status=unconfigured`. Bearer-token
+	// auth on the MCP endpoint continues to work either way.
+	//
+	// Store: DynamoDB when the three OAUTH_* table names are set,
+	// in-memory otherwise. See store.go for the design.
+	mux.HandleFunc("GET "+wellKnownOAuth, d.oauth.metadata)
+	mux.HandleFunc("POST /oauth/register", d.oauth.register)
+	mux.HandleFunc("GET /oauth/authorize", d.oauth.authorize)
+	mux.HandleFunc("GET /oauth/callback", d.oauth.callback)
+	mux.HandleFunc("POST /oauth/consent", d.oauth.consent)
+	mux.HandleFunc("POST /oauth/token", d.oauth.token)
+	mux.HandleFunc("POST /oauth/revoke", d.oauth.revoke)
+
+	// RFC 9728 OAuth 2.0 Protected Resource Metadata. Newer MCP
+	// clients (Claude Code, Cursor) probe this endpoint to learn
+	// which authorization server protects the `/mcp` resource.
+	// We point them at our own RFC 8414 metadata document.
+	protectedResource := func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"resource":                 "https://mcp.buildpulse.io/mcp",
+			"authorization_servers":    []string{"https://mcp.buildpulse.io"},
+			"bearer_methods_supported": []string{"header"},
+			"resource_documentation":   "https://platform.buildpulse.io/docs/mcp",
+		})
+	}
+	mux.HandleFunc("GET "+wellKnownProtectedResrc, protectedResource)
+	mux.HandleFunc("GET "+wellKnownProtectedRsrcMCP, protectedResource)
+
+	return withRequestID(withLogging(withCORS(mux)))
 }

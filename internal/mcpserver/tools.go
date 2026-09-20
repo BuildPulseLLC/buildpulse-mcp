@@ -71,44 +71,55 @@ func planLimitText(e *PlanLimitError) string {
 // so the model can deep-link the user back into the BuildPulse web UI —
 // matching the polish of Sentry's `sentry-issue-id` links and
 // Atlassian's deep-linked Jira tool responses.
+// closedWorld marks a tool as operating on a closed domain. Every BuildPulse
+// tool reads only the caller's own tenant, never an open world of external
+// entities, but OpenWorldHint defaults to true — so leaving it unset
+// mis-declares the tool to clients that reason about blast radius before
+// calling.
+func closedWorld() *bool { v := false; return &v }
+
 func registerTools(s *mcp.Server, c *Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_my_organizations",
 		Title:       "List my BuildPulse organizations",
 		Description: "Return every BuildPulse organization the current MCP session can access. Multi-tenant users must call this first to discover the `id` (UUID) of the organization they want to scope subsequent tool calls to — pass that `id` as the `organization_id` argument on find_flaky_tests / get_test_history / list_recent_submissions / get_repo_flakiness / get_repo_coverage. Single-tenant callers will see exactly one entry and don't need to pass `organization_id`.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "List my BuildPulse organizations",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "List my BuildPulse organizations",
 		},
 	}, guarded(c, "list_my_organizations", listMyOrganizations(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_repositories",
 		Title:       "List repositories in a BuildPulse organization",
-		Description: "Return every repository BuildPulse is monitoring for the given organization, sorted alphabetically. Call this whenever the user asks a repo-scoped question (\"do I have flaky tests?\", \"why is CI red?\") without naming a specific repo — the `name` field is what you pass to find_flaky_tests / list_recent_submissions / get_repo_flakiness / get_repo_coverage as their `repository` argument. For multi-tenant users, pass `organization_id` (call list_my_organizations first to enumerate); single-tenant tokens see exactly the bound org's repos.",
+		Description: "Return every repository BuildPulse is monitoring for the given organization, sorted alphabetically. An empty list means the organization has no repositories reporting to BuildPulse yet, not that the call failed. Call this whenever the user asks a repo-scoped question (\"do I have flaky tests?\", \"why is CI red?\") without naming a specific repo — the `name` field is what you pass to find_flaky_tests / list_recent_submissions / get_repo_flakiness / get_repo_coverage as their `repository` argument. For multi-tenant users, pass `organization_id` (call list_my_organizations first to enumerate); single-tenant tokens see exactly the bound org's repos.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "List repositories in a BuildPulse organization",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "List repositories in a BuildPulse organization",
 		},
 	}, guarded(c, "list_repositories", listRepositories(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "find_flaky_tests",
 		Title:       "Find flaky tests",
-		Description: "Search a repository's flaky / disruptive test inventory. Returns tests that have been intermittently failing in the last 14 days, sorted by disruptiveness (default) or recency. Filter by tags, free-text on test name / file / class, and a since-date. Use this as the entry point for any flaky-test investigation. For users in multiple organizations, pass `organization_id` (call list_my_organizations first to enumerate).",
+		Description: "Search a repository's flaky / disruptive test inventory. Returns tests that have been intermittently failing in the last 14 days, sorted by disruptiveness (default) or recency. Filter by tags, free-text on test name / file / class, and a since-date. Use this as the entry point for any flaky-test investigation. An empty list means no test crossed the flakiness threshold in the window — it does not mean the repository is unmonitored; check get_repo_flakiness for whether results were uploaded at all. For users in multiple organizations, pass `organization_id` (call list_my_organizations first to enumerate).",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "Find flaky tests",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "Find flaky tests",
 		},
 	}, guarded(c, "find_flaky_tests", findFlakyTests(c)))
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_test_history",
 		Title:       "Get test history",
-		Description: "Return the most-recent disruption (failure / flake) events for a specific test, identified by its BuildPulse test_id. Up to 10 events from the last 14 days. Each event includes the CI build URL and commit SHA — useful for correlating regressions with code changes.",
+		Description: "Return the most-recent disruption (failure / flake) events for a specific test, identified by its BuildPulse test_id. Up to 10 events from the last 14 days. Each event includes the CI build URL and commit SHA — useful for correlating regressions with code changes. An empty list means the test has not been disrupted in that window; an unknown test_id is an error, not an empty result. Get test_id values from find_flaky_tests.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "Get test history",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "Get test history",
 		},
 	}, guarded(c, "get_test_history", getTestHistory(c)))
 
@@ -117,8 +128,9 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "List recent CI runs",
 		Description: "List the most-recent test submissions (CI runs) for a repository. Each entry corresponds to one CI run that uploaded test results to BuildPulse. Reach for this first when a user asks \"why is CI red?\" or \"what changed in the last hour\". Each entry includes an `id` you can pass to get_submission_test_results to drill into the individual test results for that run.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "List recent CI runs",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "List recent CI runs",
 		},
 	}, guarded(c, "list_recent_submissions", listRecentSubmissions(c)))
 
@@ -127,8 +139,9 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "Get per-test results for a submission",
 		Description: "Return the individual test results recorded against one submission (one CI run). Use `status=\"failed\"` to filter to just the failures and errors — the typical \"red build\" set. Each result carries the test name / suite / file / class, the per-attempt duration in microseconds, the failure message, and the runner-recorded run count (1=first attempt, 2+=retries). Get a submission `id` from list_recent_submissions first.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "Get per-test results for a submission",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "Get per-test results for a submission",
 		},
 	}, guarded(c, "get_submission_test_results", getSubmissionTestResults(c)))
 
@@ -137,8 +150,9 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "Get failures across recent CI runs",
 		Description: "Return tests that failed in any of the most recent N submissions for a repository, aggregated by test identity (name+suite+file). For each test, returns failure_count (how many of the recent runs it failed in), most_recent_failure_at, most_recent_build_url, and the failure message from the most recent occurrence. Unlike find_flaky_tests, this is NOT filtered by the statistical flakiness threshold — it surfaces every test that failed in the recent window, which matches workflows where customers only upload to BuildPulse after their own CI has already passed (so any failure observed by BuildPulse is by definition unexpected). Default window is the last 10 submissions.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "Get failures across recent CI runs",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "Get failures across recent CI runs",
 		},
 	}, guarded(c, "get_recent_failures", getRecentFailures(c)))
 
@@ -147,8 +161,9 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "Get repo flakiness %",
 		Description: "Return the current flakiness percentage for a repository over the last 14 days — the share of CI runs disrupted by tests that failed and then passed without a code change. Higher is worse: `color` maps the value to green / yellow / red using the same thresholds as the BuildPulse badge. Reach for this when the user asks \"is the suite healthy?\", \"how flaky is X?\", \"how well tested is X?\", or wants a repo health snapshot (pair it with get_repo_coverage), then drill into individual tests with find_flaky_tests. `percentage` is -1 when BuildPulse has no test results for the repository in the window — that means nothing has been uploaded recently, not that the suite is clean. For users in multiple organizations, pass `organization_id` (call list_my_organizations first to enumerate).",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "Get repo flakiness %",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "Get repo flakiness %",
 		},
 	}, guarded(c, "get_repo_flakiness", getRepoFlakiness(c)))
 
@@ -157,8 +172,9 @@ func registerTools(s *mcp.Server, c *Client) {
 		Title:       "Get repo coverage %",
 		Description: "Return the current test coverage percentage for a repository, taken from the most recent coverage report uploaded to BuildPulse. `color` maps the value to green / light_green / yellow / red using the same thresholds as the BuildPulse coverage badge. Reach for this when the user asks \"what's our coverage?\", \"how well tested is X?\", \"is the suite healthy?\", or wants a repo health snapshot (pair it with get_repo_flakiness). `percentage` is -1 when no coverage report exists for the repository — BuildPulse only knows about coverage when the CI job uploads a report (see https://platform.buildpulse.io/docs); it is not derived from test results. For users in multiple organizations, pass `organization_id` (call list_my_organizations first to enumerate).",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint: true,
-			Title:        "Get repo coverage %",
+			ReadOnlyHint:  true,
+			OpenWorldHint: closedWorld(),
+			Title:         "Get repo coverage %",
 		},
 	}, guarded(c, "get_repo_coverage", getRepoCoverage(c)))
 }

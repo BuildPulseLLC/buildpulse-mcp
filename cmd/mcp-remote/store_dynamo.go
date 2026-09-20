@@ -61,6 +61,14 @@ type dynamoPendingItem struct {
 	OriginalState string `dynamodbav:"original_state"`
 	Scope         string `dynamodbav:"scope"`
 	ExpiresUnix   int64  `dynamodbav:"expires_unix"`
+
+	// Populated only for consent-stage records (see consent.go). Marked
+	// omitempty so the Cognito-hop rows keep their existing shape.
+	ClientName        string   `dynamodbav:"client_name,omitempty"`
+	UserSubject       string   `dynamodbav:"user_subject,omitempty"`
+	UserEmail         string   `dynamodbav:"user_email,omitempty"`
+	OrganizationIDs   []string `dynamodbav:"organization_ids,omitempty"`
+	CognitoRefreshEnc string   `dynamodbav:"cognito_refresh_enc,omitempty"`
 }
 
 type dynamoRefreshItem struct {
@@ -210,6 +218,12 @@ func (d *dynamoStore) PutPending(ctx context.Context, state string, p *pendingAu
 		OriginalState: p.OriginalState,
 		Scope:         p.Scope,
 		ExpiresUnix:   p.Expires.Unix(),
+
+		ClientName:        p.ClientName,
+		UserSubject:       p.UserSubject,
+		UserEmail:         p.UserEmail,
+		OrganizationIDs:   p.OrganizationIDs,
+		CognitoRefreshEnc: p.CognitoRefreshEnc,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal pending: %w", err)
@@ -246,6 +260,12 @@ func (d *dynamoStore) PopPending(ctx context.Context, state string) (*pendingAut
 		OriginalState: raw.OriginalState,
 		Scope:         raw.Scope,
 		Expires:       unixToTime(raw.ExpiresUnix),
+
+		ClientName:        raw.ClientName,
+		UserSubject:       raw.UserSubject,
+		UserEmail:         raw.UserEmail,
+		OrganizationIDs:   raw.OrganizationIDs,
+		CognitoRefreshEnc: raw.CognitoRefreshEnc,
 	}, nil
 }
 

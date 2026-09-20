@@ -1,0 +1,8 @@
+# `go build ./...` writes each command's binary into its package
+# directory, named after that directory. Keep them out of the tree.
+/cmd/mcp-remote/mcp-remote
+/cmd/mcp/mcp
+
+# Go test/coverage artifacts
+*.test
+*.out

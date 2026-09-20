@@ -127,11 +127,12 @@ func main() {
 		func(r *http.Request) *mcp.Server {
 			token, err := extractToken(r.Header.Get("Authorization"))
 			if err != nil {
-				// Returning nil makes the SDK respond 400.
-				// We can't shape the response body here, but the OAuth
-				// metadata endpoint below tells well-behaved clients
-				// where to look for credentials.
-				log.Printf("rejecting MCP session: %v (remote=%s)", err, r.RemoteAddr)
+				// Unreachable in practice: requireBearer rejects these
+				// before the SDK is handed the request, because the SDK
+				// answers a nil server with 400 and an MCP client needs
+				// a 401 challenge to know it should authenticate. Kept
+				// as defence in depth if the wrapper is ever dropped.
+				log.Printf("rejecting MCP session (unchallenged path): %v (remote=%s)", err, r.RemoteAddr)
 				return nil
 			}
 			client := mcpserver.NewClient(platformURL, token)
@@ -139,8 +140,9 @@ func main() {
 		},
 		&mcp.StreamableHTTPOptions{Stateless: true},
 	)
-	mux.Handle("/mcp", streamable)
-	mux.Handle("/mcp/", streamable)
+	guarded := requireBearer(streamable)
+	mux.Handle("/mcp", guarded)
+	mux.Handle("/mcp/", guarded)
 
 	// MCP discovery — clients (Claude.ai's Connector picker, etc.)
 	// fetch /.well-known/mcp to learn what the server offers.
@@ -260,6 +262,42 @@ func extractToken(header string) (string, error) {
 	return token, nil
 }
 
+// requireBearer answers an unauthenticated /mcp request with the OAuth
+// challenge the MCP authorization spec requires.
+//
+// This has to sit in front of the SDK handler rather than inside its
+// server factory: the factory can only return nil, which the SDK turns
+// into a bare 400. A 400 reads as "bad request" to an MCP client, so it
+// never learns that credentials are what's missing — clients reached
+// /oauth/register by probing the well-known documents directly, then had
+// nowhere to go. RFC 9728 says point at the protected-resource metadata
+// from the challenge, which is what makes discovery work end to end.
+func requireBearer(next http.Handler) http.Handler {
+	challenge := fmt.Sprintf("Bearer resource_metadata=%q",
+		strings.TrimSuffix(envOr(envIssuer, defaultIssuer), "/")+wellKnownProtectedResrc)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := extractToken(r.Header.Get("Authorization")); err != nil {
+			log.Printf("challenging unauthenticated MCP request: %v (remote=%s)", err, r.RemoteAddr)
+			w.Header().Set("WWW-Authenticate", challenge)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			// JSON-RPC-shaped so a client that parses the body rather
+			// than the status still sees a structured error.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      nil,
+				"error": map[string]any{
+					"code":    -32001,
+					"message": "authentication required: " + err.Error(),
+				},
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // withCORS opens CORS for browser-based MCP clients (Claude.ai,
 // ChatGPT). Only the headers MCP actually needs are exposed. No
 // credentials cookie — we use bearer tokens.
@@ -271,7 +309,10 @@ func withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Accept")
-			w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id, Mcp-Protocol-Version")
+			// WWW-Authenticate must be readable by browser clients
+			// (Claude.ai, ChatGPT), or the 401 challenge below is
+			// invisible to them and discovery dead-ends.
+			w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id, Mcp-Protocol-Version, WWW-Authenticate")
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		if r.Method == http.MethodOptions {

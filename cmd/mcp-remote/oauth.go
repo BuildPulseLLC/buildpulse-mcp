@@ -459,12 +459,15 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("callback: awaiting consent sub=%s client=%s (%s)", idClaims.Sub, pending.ClientID, clientName)
+	destLabel, recognised := classifyDestination(pending.RedirectURI)
+	log.Printf("callback: awaiting consent sub=%s client=%s (%s) recognised=%t", idClaims.Sub, pending.ClientID, clientName, recognised)
 	renderConsent(w, consentView{
 		ClientName:  clientName,
 		RedirectURI: pending.RedirectURI,
 		UserEmail:   idClaims.Email,
 		ConsentKey:  consentKey,
+		Recognised:  recognised,
+		DestLabel:   destLabel,
 	})
 }
 

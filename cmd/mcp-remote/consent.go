@@ -65,6 +65,8 @@ var consentPage = template.Must(template.New("consent").Parse(`<!DOCTYPE html>
   .sub { color:#5b6270; margin:0 0 24px; font-size:14px; }
   .warn { background:#fff8e6; border:1px solid #f0d491; border-radius:8px; padding:12px 14px;
           font-size:13px; color:#6b4e00; margin:0 0 20px; }
+  .note { background:#f0f4fb; border:1px solid #c9d8ef; border-radius:8px; padding:12px 14px;
+          font-size:13px; color:#2f4668; margin:0 0 20px; }
   dl { margin:0 0 24px; padding:16px; background:#f7f8fa; border-radius:8px; font-size:13px; }
   dt { color:#5b6270; margin-bottom:2px; }
   dd { margin:0 0 12px; font-weight:600; word-break:break-all; }
@@ -85,6 +87,7 @@ var consentPage = template.Must(template.New("consent").Parse(`<!DOCTYPE html>
     dl { background:#1f232b; }
     ul { color:#c9cede; }
     .warn { background:#2a2312; border-color:#5c4a12; color:#e8cf8a; }
+    .note { background:#141c28; border-color:#27384f; color:#9db6d8; }
     .deny { background:#1f232b; border-color:#3a404d; color:#e6e8ec; }
     .deny:hover { background:#272b35; }
   }
@@ -95,10 +98,16 @@ var consentPage = template.Must(template.New("consent").Parse(`<!DOCTYPE html>
     <h1>Authorize access</h1>
     <p class="sub"><strong>{{.ClientName}}</strong> wants to read BuildPulse data for <strong>{{.UserEmail}}</strong>.</p>
 
+    {{if .Recognised}}
+    <div class="note">
+      This looks like <strong>{{.DestLabel}}</strong>. Approve it only if you started this connection yourself.
+    </div>
+    {{else}}
     <div class="warn">
       This application registered itself and has <strong>not</strong> been verified by BuildPulse.
       Approve it only if you started this connection yourself.
     </div>
+    {{end}}
 
     <dl>
       <dt>Application</dt><dd>{{.ClientName}}</dd>
@@ -120,11 +129,58 @@ var consentPage = template.Must(template.New("consent").Parse(`<!DOCTYPE html>
 </body>
 </html>`))
 
+// recognisedRedirectHosts maps a destination host to the product it belongs
+// to. Matching is on the redirect URI's HOST and never on client_name,
+// because the name is attacker-controlled — anyone can register themselves as
+// "Google Antigravity" — while an attacker cannot make the authorization code
+// land on a host they do not control. That asymmetry is the whole reason this
+// is safe to do at all.
+var recognisedRedirectHosts = map[string]string{
+	"antigravity.google": "Google Antigravity",
+	"claude.ai":          "Claude",
+	"claude.com":         "Claude",
+	"cursor.com":         "Cursor",
+	"chatgpt.com":        "ChatGPT",
+	"openai.com":         "ChatGPT",
+}
+
+// classifyDestination decides whether the consent page should warn.
+//
+// An unverified-client warning that fires on every legitimate connection
+// teaches people to click through it, which costs us the warning exactly when
+// it matters. So it is reserved for destinations we do not recognise.
+//
+// Loopback counts as recognised: the code is delivered to the user's own
+// machine, so a remote attacker cannot receive it. An attacker who can already
+// run a listener on the victim's computer has not gained anything here.
+func classifyDestination(redirectURI string) (label string, recognised bool) {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+
+	if isLoopbackHost(host) {
+		return "an application running on your own computer", true
+	}
+	for domain, product := range recognisedRedirectHosts {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return product, true
+		}
+	}
+	return "", false
+}
+
 type consentView struct {
 	ClientName  string
 	RedirectURI string
 	UserEmail   string
 	ConsentKey  string
+
+	// Recognised suppresses the unverified warning; DestLabel names what the
+	// destination was recognised as. See classifyDestination.
+	Recognised bool
+	DestLabel  string
 }
 
 // renderConsent writes the interstitial. The page carries no cookie and no

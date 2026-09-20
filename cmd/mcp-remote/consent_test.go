@@ -356,3 +356,77 @@ func TestConsentTTLMatchesPendingWindow(t *testing.T) {
 		t.Errorf("consentTTL = %v, want 15m to match the pending table window", consentTTL)
 	}
 }
+
+// --- destination classification ------------------------------------------
+
+func TestClassifyDestination(t *testing.T) {
+	cases := []struct {
+		uri        string
+		recognised bool
+		label      string
+	}{
+		{"https://antigravity.google/oauth-callback", true, "Google Antigravity"},
+		{"https://claude.ai/api/mcp/auth_callback", true, "Claude"},
+		{"https://console.cursor.com/cb", true, "Cursor"},
+		{"http://localhost:59988/callback", true, "an application running on your own computer"},
+		{"http://127.0.0.1:1234/cb", true, "an application running on your own computer"},
+		{"https://attacker.example.com/cb", false, ""},
+		{"https://antigravity.google.evil.com/cb", false, ""},
+		{"https://notclaude.ai/cb", false, ""},
+	}
+	for _, c := range cases {
+		label, ok := classifyDestination(c.uri)
+		if ok != c.recognised {
+			t.Errorf("classifyDestination(%q) recognised = %v, want %v", c.uri, ok, c.recognised)
+		}
+		if label != c.label {
+			t.Errorf("classifyDestination(%q) label = %q, want %q", c.uri, label, c.label)
+		}
+	}
+}
+
+// The security property that makes the allowlist safe: a hostile client can
+// call itself anything, so trust must come from the destination host alone.
+// An attacker impersonating a known product by NAME must still be warned on.
+func TestImpersonatingClientNameStillWarns(t *testing.T) {
+	s, _ := newTestServer()
+	cog := stubCognito(t, 200, "victim-sub", "victim@customer.com")
+	defer cog.Close()
+	s.cognitoDomain = cog.URL
+	s.cognitoClientID = "cid"
+
+	// Same name as a trusted product, attacker-controlled destination.
+	clientID := registerClient(t, s, "Google Antigravity", "https://attacker.example.com/cb")
+	state := authorizeAndGetState(t, s, clientID, "https://attacker.example.com/cb", "v")
+
+	body := callbackFor(s, state).Body.String()
+	if !strings.Contains(body, "not</strong> been verified") {
+		t.Error("a client impersonating a known product by name must still be warned on")
+	}
+	if strings.Contains(body, "This looks like") {
+		t.Error("attacker-controlled destination was presented as recognised")
+	}
+}
+
+func TestRecognisedDestinationSuppressesWarning(t *testing.T) {
+	s, _ := newTestServer()
+	cog := stubCognito(t, 200, "u", "u@example.com")
+	defer cog.Close()
+	s.cognitoDomain = cog.URL
+	s.cognitoClientID = "cid"
+
+	clientID := registerClient(t, s, "Google Antigravity", "https://antigravity.google/oauth-callback")
+	state := authorizeAndGetState(t, s, clientID, "https://antigravity.google/oauth-callback", "v")
+
+	body := callbackFor(s, state).Body.String()
+	if strings.Contains(body, "not</strong> been verified") {
+		t.Error("a recognised destination should not raise the unverified warning")
+	}
+	if !strings.Contains(body, "Google Antigravity") {
+		t.Error("recognised destination should be named")
+	}
+	// The destination itself must still be shown, recognised or not.
+	if !strings.Contains(body, "antigravity.google/oauth-callback") {
+		t.Error("destination URI must always be visible")
+	}
+}

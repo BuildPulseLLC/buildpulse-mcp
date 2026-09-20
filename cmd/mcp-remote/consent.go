@@ -35,11 +35,13 @@ const (
 	// needing a fourth DynamoDB table (and the Terraform to go with it).
 	consentPrefix = "consent:"
 
-	// consentTTL is how long the user has to decide. Long enough to
-	// actually read the page, short enough that an abandoned decision
-	// does not leave an approvable request lying around. The pending
-	// table's own TTL sweeps anything we fail to pop.
-	consentTTL = 10 * time.Minute
+	// consentTTL is how long the user has to decide. Matches the
+	// pending table's own 15-minute window: a person reading a security
+	// prompt can easily take more than a few minutes, and having the
+	// approval die underneath them is worse than the marginal exposure
+	// of a slightly longer window. Abandoned decisions are swept by the
+	// table TTL either way.
+	consentTTL = 15 * time.Minute
 )
 
 // consentPage is rendered straight from /oauth/callback. Everything
@@ -140,6 +142,45 @@ func renderConsent(w http.ResponseWriter, v consentView) {
 	}
 }
 
+// consentErrorPage is shown when a consent POST cannot proceed. These are
+// browser navigations by a real person, so they get prose and a way forward
+// rather than the JSON an API client would want.
+var consentErrorPage = template.Must(template.New("consent-error").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} &middot; BuildPulse</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#f4f5f7; font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         color:#14171f; padding:24px; box-sizing:border-box; }
+  .card { background:#fff; max-width:420px; width:100%; border-radius:12px; padding:32px;
+          box-shadow:0 1px 3px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.06); box-sizing:border-box; }
+  h1 { font-size:19px; margin:0 0 10px; letter-spacing:-.01em; }
+  p { margin:0; color:#5b6270; font-size:14px; }
+  @media (prefers-color-scheme: dark) {
+    body { background:#0f1116; color:#e6e8ec; }
+    .card { background:#181b22; box-shadow:none; border:1px solid #272b35; }
+    p { color:#9aa2b1; }
+  }
+</style>
+</head>
+<body><div class="card"><h1>{{.Title}}</h1><p>{{.Detail}}</p></div></body>
+</html>`))
+
+func renderConsentError(w http.ResponseWriter, title, detail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'; default-src 'none'; style-src 'unsafe-inline'")
+	w.WriteHeader(http.StatusBadRequest)
+	if err := consentErrorPage.Execute(w, struct{ Title, Detail string }{title, detail}); err != nil {
+		log.Printf("consent: render error page failed: %v", err)
+	}
+}
+
 // consent handles the user's decision. Approve mints the authorization code
 // that /oauth/callback used to mint unconditionally; deny returns the RFC
 // 6749 §4.1.2.1 access_denied error to the client.
@@ -155,14 +196,19 @@ func (s *oauthServer) consent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Single-use: the pop means a replayed or double-submitted form finds
-	// nothing, so one approval can never mint two codes.
+	// nothing, so one approval can never mint two codes. This is also the
+	// most common way a real person lands here — they approved, the
+	// redirect went to the client, and they hit back and clicked again —
+	// so it gets a readable page rather than a JSON blob.
 	pending, err := s.store.PopPending(r.Context(), consentPrefix+key)
 	if err != nil {
-		oauthError(w, http.StatusBadRequest, "invalid_request", "this authorization request is no longer valid; restart from /authorize")
+		renderConsentError(w, "This request has already been used",
+			"Approvals can only be used once. If the application is still waiting, start the connection again from the app.")
 		return
 	}
 	if time.Now().After(pending.Expires) {
-		oauthError(w, http.StatusBadRequest, "invalid_request", "this authorization request has expired; restart from /authorize")
+		renderConsentError(w, "This request has expired",
+			"Authorization requests are only valid for a short time. Start the connection again from the application.")
 		return
 	}
 

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- helpers --------------------------------------------------------------
@@ -326,5 +327,32 @@ func TestClientIPUsesRightmostForwardedFor(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8, 203.0.113.9")
 	if got := clientIP(req); got != "203.0.113.9" {
 		t.Errorf("clientIP = %q, want 203.0.113.9", got)
+	}
+}
+
+// A replayed approval is the common real-world case: the user approved, the
+// redirect went to the client, they hit back and clicked again. They get a
+// browser page, not the JSON an API client would want.
+func TestReplayedConsentRendersReadablePage(t *testing.T) {
+	s, _, state := attackerSetup(t)
+	key := consentKeyFrom(t, callbackFor(s, state).Body.String())
+	postConsent(s, key, "approve") // consumes it
+
+	w := postConsent(s, key, "approve")
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html for a browser-facing error", ct)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `"error"`) || strings.Contains(body, "invalid_request") {
+		t.Error("replayed consent returned a raw JSON error to a browser")
+	}
+	if !strings.Contains(body, "already been used") {
+		t.Errorf("error page does not explain what happened: %s", body)
+	}
+}
+
+func TestConsentTTLMatchesPendingWindow(t *testing.T) {
+	if consentTTL != 15*time.Minute {
+		t.Errorf("consentTTL = %v, want 15m to match the pending table window", consentTTL)
 	}
 }

@@ -11,7 +11,22 @@ on:
       - main
       - feat/**
       - fix/**
+  # Branch protection requires build-and-push + deploy on every PR. Without a
+  # pull_request trigger those checks only ever report for branches matching
+  # the push filter above, so a PR from any other prefix can never satisfy
+  # them and can never merge — it just sits BLOCKED with no way to fix it
+  # short of renaming the branch.
+  pull_request:
   workflow_dispatch: # manual redeploy from the Actions UI
+
+# Serialize per target environment. Development is a single shared deploy
+# target, so a PR run and a branch push (or two different PRs) must not apply
+# on top of each other. Runs are never cancelled in flight: these apply
+# Terraform and update an ECS service, and a half-finished apply is worse
+# than a redundant one.
+concurrency:
+  group: build-and-push-${{ github.ref_name == 'main' && 'production' || 'development' }}
+  cancel-in-progress: false
 
 permissions:
   id-token: write

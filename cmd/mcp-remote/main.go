@@ -61,6 +61,20 @@ const (
 	wellKnownMCP              = "/.well-known/mcp"
 	wellKnownProtectedResrc   = "/.well-known/oauth-protected-resource"
 	wellKnownProtectedRsrcMCP = "/.well-known/oauth-protected-resource/mcp"
+
+	// wellKnownGlama proves to glama.ai that we control this origin, which
+	// is what claims the connector listing at
+	// glama.ai/mcp/connectors/io.github.BuildPulseLLC/buildpulse-mcp.
+	//
+	// This must STAY served. Glama re-checks it periodically and removing it
+	// starts a seven-day grace period after which the claim lapses and we
+	// lose control of the listing copy. It is not a one-off verification
+	// step — do not delete it in a cleanup.
+	//
+	// The HTTP challenge is used in preference to Glama's GitHub App, which
+	// would need standing read access to the BuildPulseLLC org. This grants
+	// them nothing beyond proof that we serve this domain.
+	wellKnownGlama = "/.well-known/glama.json"
 )
 
 func main() {
@@ -390,6 +404,14 @@ func newHandler(d serverDeps) http.Handler {
 	}
 	mux.HandleFunc("GET "+wellKnownProtectedResrc, protectedResource)
 	mux.HandleFunc("GET "+wellKnownProtectedRsrcMCP, protectedResource)
+
+	// Glama connector ownership proof. See wellKnownGlama.
+	mux.HandleFunc("GET "+wellKnownGlama, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"$schema": "https://glama.ai/mcp/schemas/connector.json",
+			"claim":   "glama_claim_TLPrMCHWZpd0JXo1e4XzroB_vTjdJjJ8",
+		})
+	})
 
 	return withRequestID(withLogging(withCORS(mux)))
 }

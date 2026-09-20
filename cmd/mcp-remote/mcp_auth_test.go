@@ -269,3 +269,40 @@ func TestChallengeURLIsServedByTheSameHandler(t *testing.T) {
 		t.Errorf("resource = %q, want it under this deployment's issuer %q", doc.Resource, origin)
 	}
 }
+
+// The Glama claim file proves we control this origin. Glama re-checks it and
+// removal starts a seven-day countdown to losing the listing, so assert it is
+// served, parses, and carries the exact claim token — a silent typo or a
+// well-meaning cleanup would otherwise cost the listing.
+func TestGlamaClaimFileIsServed(t *testing.T) {
+	h := testHandler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", wellKnownGlama, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", wellKnownGlama, w.Code)
+	}
+	var doc struct {
+		Schema string `json:"$schema"`
+		Claim  string `json:"claim"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("not valid JSON: %v (%s)", err, w.Body.String())
+	}
+	if doc.Claim != "glama_claim_TLPrMCHWZpd0JXo1e4XzroB_vTjdJjJ8" {
+		t.Errorf("claim = %q, want the exact token issued by Glama", doc.Claim)
+	}
+	if doc.Schema != "https://glama.ai/mcp/schemas/connector.json" {
+		t.Errorf("$schema = %q", doc.Schema)
+	}
+}
+
+// It must not sit behind the bearer guard: Glama fetches it unauthenticated.
+func TestGlamaClaimFileIsPublic(t *testing.T) {
+	h := testHandler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", wellKnownGlama, nil))
+	if w.Code == http.StatusUnauthorized || w.Header().Get("WWW-Authenticate") != "" {
+		t.Error("claim file must be reachable without credentials")
+	}
+}

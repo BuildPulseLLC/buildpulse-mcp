@@ -188,6 +188,7 @@ func main() {
 	mux.HandleFunc("POST /oauth/register", oauth.register)
 	mux.HandleFunc("GET /oauth/authorize", oauth.authorize)
 	mux.HandleFunc("GET /oauth/callback", oauth.callback)
+	mux.HandleFunc("POST /oauth/consent", oauth.consent)
 	mux.HandleFunc("POST /oauth/token", oauth.token)
 	mux.HandleFunc("POST /oauth/revoke", oauth.revoke)
 

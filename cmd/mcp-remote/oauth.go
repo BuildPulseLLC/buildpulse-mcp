@@ -138,6 +138,10 @@ type oauthServer struct {
 	// Internal HTTP client for Cognito calls. Carved out so tests can
 	// inject a fake.
 	http *http.Client
+
+	// registerLimiter bounds unauthenticated writes to the (durable,
+	// un-TTL'd) clients table. See register_guard.go.
+	registerLimiter *rateLimiter
 }
 
 func newOAuthServer(store Store, cr crypter) *oauthServer {
@@ -155,6 +159,7 @@ func newOAuthServer(store Store, cr crypter) *oauthServer {
 		store:           store,
 		crypter:         cr,
 		http:            &http.Client{Timeout: 10 * time.Second},
+		registerLimiter: newRateLimiter(registerRateLimit, registerRateWindow),
 	}
 }
 
@@ -246,6 +251,17 @@ type pendingAuth struct {
 	OriginalState string
 	Scope         string
 	Expires       time.Time
+
+	// The fields below are empty during the Cognito hop and populated
+	// once the user comes back authenticated, when the same record is
+	// re-stashed under a consentPrefix key to back the consent screen.
+	// Keeping one struct for both stages avoids a fourth table; see
+	// consent.go.
+	ClientName        string
+	UserSubject       string
+	UserEmail         string
+	OrganizationIDs   []string
+	CognitoRefreshEnc string
 }
 
 // register handles RFC 7591 dynamic client registration. We accept
@@ -258,12 +274,21 @@ func (s *oauthServer) register(w http.ResponseWriter, r *http.Request) {
 		GrantTypes              []string `json:"grant_types"`
 		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 	}
+	if s.registerLimiter != nil && !s.registerLimiter.allow(clientIP(r)) {
+		log.Printf("register: rate limited ip=%s", clientIP(r))
+		w.Header().Set("Retry-After", "600")
+		oauthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many client registrations from this address; try again later")
+		return
+	}
+	// Cap the body: this endpoint is unauthenticated, so an unbounded
+	// read is an easy way to burn memory on every ECS task at once.
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "could not decode JSON body")
 		return
 	}
-	if len(req.RedirectURIs) == 0 {
-		oauthError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uris is required and must be non-empty")
+	if err := validateRegistration(req.ClientName, req.RedirectURIs); err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_redirect_uri", err.Error())
 		return
 	}
 
@@ -412,33 +437,35 @@ func (s *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		log.Printf("resolveUserOrgs ok for sub=%s email=%s: %d orgs", idClaims.Sub, idClaims.Email, len(orgIDs))
 	}
 
-	code := randomHex(32)
-	if err := s.store.PutCode(r.Context(), &authorizationCode{
-		Code:              code,
-		ClientID:          pending.ClientID,
-		RedirectURI:       pending.RedirectURI,
-		CodeChallenge:     pending.CodeChallenge,
-		Scope:             pending.Scope,
-		UserSubject:       idClaims.Sub,
-		UserEmail:         idClaims.Email,
-		OrganizationIDs:   orgIDs,
-		CognitoRefreshEnc: cognitoRefreshEnc,
-		Expires:           time.Now().Add(authCodeTTL),
-	}); err != nil {
-		oauthError(w, http.StatusInternalServerError, "server_error", "failed to persist authorization code")
+	// The user is authenticated, but nothing is authorized yet. Because
+	// any unauthenticated party can register a client pointing at a
+	// redirect URI they control, minting the code here would let a
+	// crafted /authorize link turn a live Cognito session into a code
+	// delivered to the attacker without the user ever seeing a
+	// BuildPulse screen. Stash the authenticated state and ask.
+	clientName := pending.ClientID
+	if c, cerr := s.store.GetClient(r.Context(), pending.ClientID); cerr == nil && c.ClientName != "" {
+		clientName = c.ClientName
+	}
+	pending.ClientName = clientName
+	pending.UserSubject = idClaims.Sub
+	pending.UserEmail = idClaims.Email
+	pending.OrganizationIDs = orgIDs
+	pending.CognitoRefreshEnc = cognitoRefreshEnc
+
+	consentKey, err := s.stashConsent(r.Context(), pending)
+	if err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error", "failed to persist authorization state")
 		return
 	}
 
-	finalRedirect := pending.RedirectURI
-	sep := "?"
-	if strings.Contains(finalRedirect, "?") {
-		sep = "&"
-	}
-	finalRedirect += sep + url.Values{
-		"code":  {code},
-		"state": {pending.OriginalState},
-	}.Encode()
-	http.Redirect(w, r, finalRedirect, http.StatusFound)
+	log.Printf("callback: awaiting consent sub=%s client=%s (%s)", idClaims.Sub, pending.ClientID, clientName)
+	renderConsent(w, consentView{
+		ClientName:  clientName,
+		RedirectURI: pending.RedirectURI,
+		UserEmail:   idClaims.Email,
+		ConsentKey:  consentKey,
+	})
 }
 
 // token is the /oauth/token endpoint. It dispatches on grant_type:

@@ -50,3 +50,35 @@ func TestEveryToolHasTitleAndReadOnlyHint(t *testing.T) {
 		}
 	}
 }
+
+// Every tool reads only the caller's own BuildPulse tenant, so the domain is
+// closed. OpenWorldHint defaults to TRUE when unset, which would mis-declare
+// blast radius to clients (and to directories that score tool definitions), so
+// assert it is explicitly false on every tool rather than left to default.
+func TestAllToolsDeclareClosedWorld(t *testing.T) {
+	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer platform.Close()
+
+	res, err := newTestServerSession(t, platform).ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	for _, tl := range res.Tools {
+		if tl.Annotations == nil {
+			t.Errorf("%s: no annotations", tl.Name)
+			continue
+		}
+		if !tl.Annotations.ReadOnlyHint {
+			t.Errorf("%s: ReadOnlyHint should be true", tl.Name)
+		}
+		if tl.Annotations.OpenWorldHint == nil {
+			t.Errorf("%s: OpenWorldHint unset — defaults to true, which is wrong for a tenant-scoped read", tl.Name)
+			continue
+		}
+		if *tl.Annotations.OpenWorldHint {
+			t.Errorf("%s: OpenWorldHint = true, want false", tl.Name)
+		}
+	}
+}

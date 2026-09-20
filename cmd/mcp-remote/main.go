@@ -376,10 +376,14 @@ func newHandler(d serverDeps) http.Handler {
 	// clients (Claude Code, Cursor) probe this endpoint to learn
 	// which authorization server protects the `/mcp` resource.
 	// We point them at our own RFC 8414 metadata document.
+	// Built from the issuer, not hardcoded: on dev these must describe
+	// dev, or a client that follows the challenge is handed production's
+	// authorization server and the discovery chain dead-ends.
+	issuer := strings.TrimSuffix(d.oauth.issuer, "/")
 	protectedResource := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"resource":                 "https://mcp.buildpulse.io/mcp",
-			"authorization_servers":    []string{"https://mcp.buildpulse.io"},
+			"resource":                 issuer + "/mcp",
+			"authorization_servers":    []string{issuer},
 			"bearer_methods_supported": []string{"header"},
 			"resource_documentation":   "https://platform.buildpulse.io/docs/mcp",
 		})

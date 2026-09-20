@@ -254,6 +254,18 @@ func TestChallengeURLIsServedByTheSameHandler(t *testing.T) {
 		t.Fatalf("advertised metadata is not JSON: %v", err)
 	}
 	if doc.Resource == "" || len(doc.AuthorizationServers) == 0 {
-		t.Errorf("metadata at %s is missing resource/authorization_servers: %s", u.Path, w2.Body.String())
+		t.Fatalf("metadata at %s is missing resource/authorization_servers: %s", u.Path, w2.Body.String())
+	}
+
+	// The document must describe THIS deployment. Hardcoded production
+	// URLs would send a dev client to production's authorization server,
+	// which is a dead end that a non-empty check does not catch.
+	origin := u.Scheme + "://" + u.Host
+	if doc.AuthorizationServers[0] != origin {
+		t.Errorf("authorization_servers[0] = %q, want this deployment's issuer %q",
+			doc.AuthorizationServers[0], origin)
+	}
+	if !strings.HasPrefix(doc.Resource, origin) {
+		t.Errorf("resource = %q, want it under this deployment's issuer %q", doc.Resource, origin)
 	}
 }

@@ -430,3 +430,58 @@ func TestRecognisedDestinationSuppressesWarning(t *testing.T) {
 		t.Error("destination URI must always be visible")
 	}
 }
+
+// --- CSP must not block the redirect that carries the code ----------------
+
+// Regression test for a silent, total breakage: `form-action 'self'` is also
+// enforced against the redirect that follows the form POST, so the 302
+// delivering the authorization code to the client was blocked by the browser
+// and Allow appeared to do nothing.
+func TestConsentCSPAllowsTheClientRedirect(t *testing.T) {
+	cases := []struct{ redirect, wantOrigin string }{
+		{"http://localhost:58613/callback", "http://localhost:58613"},
+		{"http://127.0.0.1:1234/cb", "http://127.0.0.1:1234"},
+		{"https://antigravity.google/oauth-callback", "https://antigravity.google"},
+		{"com.example.app:/oauth2redirect", "com.example.app:"},
+	}
+	for _, c := range cases {
+		csp := consentCSP(c.redirect)
+		if !strings.Contains(csp, "form-action 'self' "+c.wantOrigin) {
+			t.Errorf("consentCSP(%q) = %q, want form-action to allow %q", c.redirect, csp, c.wantOrigin)
+		}
+	}
+}
+
+// The header actually served must permit the destination shown on the page.
+func TestRenderedConsentHeaderPermitsDestination(t *testing.T) {
+	s, _ := newTestServer()
+	cog := stubCognito(t, 200, "u", "u@example.com")
+	defer cog.Close()
+	s.cognitoDomain = cog.URL
+	s.cognitoClientID = "cid"
+
+	const redirect = "http://localhost:58613/callback"
+	clientID := registerClient(t, s, "Claude Code", redirect)
+	state := authorizeAndGetState(t, s, clientID, redirect, "v")
+
+	csp := callbackFor(s, state).Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "form-action") && !strings.Contains(csp, "http://localhost:58613") {
+		t.Errorf("CSP %q restricts form-action without allowing the redirect target", csp)
+	}
+	// The protections that matter must survive.
+	if !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Error("frame-ancestors protection was lost")
+	}
+}
+
+// A destination we cannot parse must not produce a policy that blocks the
+// redirect outright.
+func TestConsentCSPOmitsFormActionWhenUnparseable(t *testing.T) {
+	csp := consentCSP("::::not a uri")
+	if strings.Contains(csp, "form-action") {
+		t.Errorf("CSP %q should omit form-action rather than block the flow", csp)
+	}
+	if !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Error("frame-ancestors must still be present")
+	}
+}

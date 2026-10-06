@@ -82,3 +82,37 @@ func TestAllToolsDeclareClosedWorld(t *testing.T) {
 		}
 	}
 }
+
+// DestructiveHint, like OpenWorldHint, defaults to TRUE when unset. Every tool
+// here only reads, so an unset hint told any client that reasons about blast
+// radius to treat a plain query as potentially destructive and prompt the user
+// first. OpenAI's plugin review additionally requires readOnlyHint,
+// destructiveHint and openWorldHint to carry explicit booleans, and names an
+// annotation that disagrees with the behaviour as grounds for rejection.
+func TestAllToolsDeclareNonDestructive(t *testing.T) {
+	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer platform.Close()
+
+	res, err := newTestServerSession(t, platform).ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(res.Tools) == 0 {
+		t.Fatal("no tools listed — the assertions below would pass vacuously")
+	}
+	for _, tl := range res.Tools {
+		if tl.Annotations == nil {
+			t.Errorf("%s: no annotations", tl.Name)
+			continue
+		}
+		if tl.Annotations.DestructiveHint == nil {
+			t.Errorf("%s: DestructiveHint unset — defaults to true, which is wrong for a read-only tool", tl.Name)
+			continue
+		}
+		if *tl.Annotations.DestructiveHint {
+			t.Errorf("%s: DestructiveHint = true, want false", tl.Name)
+		}
+	}
+}

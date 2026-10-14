@@ -113,9 +113,7 @@ resource "aws_ecs_task_definition" "definition" {
         #
         # Sourced from the environment remote state, as platform-api does:
         # the cluster endpoint in replica set mode, so the driver discovers
-        # the instances and follows the primary through a failover. The
-        # value used before came from the MONGODB_URI repository secret and
-        # pinned the client to one address with directConnection=true.
+        # the instances and follows the primary through a failover.
         { name = "MONGODB_URI", value = data.terraform_remote_state.environment.outputs.documentdb.ecs_replica_set_uri },
 
         # OAuth state DynamoDB tables — make the OAuth flow survive

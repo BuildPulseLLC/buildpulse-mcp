@@ -8,7 +8,7 @@ Terraform module for the hosted BuildPulse MCP server at
 |--------|--------------|------------|
 | Domain | `platform.buildpulse.io` | `mcp.buildpulse.io` |
 | Binary | `cmd/api` | `cmd/mcp-remote` |
-| Env  | `MONGODB_URI` | `PLATFORM_API_URL` (no DB access) |
+| Env  | `MONGODB_URI` | `PLATFORM_API_URL`, plus `MONGODB_URI` for `mcpSessions` only |
 | Auth | Per-request `apiTokens` lookup | Per-request token forwarded to `platform-api` |
 | Image | `${ecr.platform_api}` | `${ecr.mcp_remote}` (NEW — see prerequisites) |
 

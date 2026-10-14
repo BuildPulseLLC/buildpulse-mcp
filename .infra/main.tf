@@ -110,7 +110,13 @@ resource "aws_ecs_task_definition" "definition" {
         # the Cognito user → memberships → org UUIDs on OAuth callback
         # and persist the resulting mcpSession. Without this, OAuth
         # tokens are minted but won't authenticate on tool calls.
-        { name = "MONGODB_URI", value = var.mongodb_uri },
+        #
+        # Sourced from the environment remote state, as platform-api does:
+        # the cluster endpoint in replica set mode, so the driver discovers
+        # the instances and follows the primary through a failover. The
+        # value used before came from the MONGODB_URI repository secret and
+        # pinned the client to one address with directConnection=true.
+        { name = "MONGODB_URI", value = data.terraform_remote_state.environment.outputs.documentdb.ecs_replica_set_uri },
 
         # OAuth state DynamoDB tables — make the OAuth flow survive
         # rolling deploys + horizontal scaling. When unset the server

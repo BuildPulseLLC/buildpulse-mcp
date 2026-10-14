@@ -53,9 +53,3 @@ variable "platform_api_url" {
   }
 }
 
-variable "mongodb_uri" {
-  type        = string
-  description = "UNUSED since 2026-10: MONGODB_URI now comes from the environment remote state (documentdb.ecs_replica_set_uri). Kept so the workflow's TF_VAR_mongodb_uri pass-through does not fail; the variable and the MONGODB_URI repository secret can be removed together."
-  sensitive   = true
-  default     = ""
-}

@@ -306,3 +306,42 @@ func TestGlamaClaimFileIsPublic(t *testing.T) {
 		t.Error("claim file must be reachable without credentials")
 	}
 }
+
+// OpenAI's plugin submission verifies domain ownership by fetching the
+// challenge token and comparing it byte for byte. The failure mode worth
+// catching is serving it the way the Glama route next to it serves its
+// claim — as JSON — which looks fine in a browser and fails the check.
+// So this asserts the body IS the token, with no wrapper and no newline.
+func TestOpenAIChallengeIsServedAsBarePlainText(t *testing.T) {
+	const token = "openai-apps-challenge-abc123"
+	t.Setenv("OPENAI_APPS_CHALLENGE", token)
+
+	h := testHandler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", wellKnownOpenAIChallenge, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", wellKnownOpenAIChallenge, w.Code)
+	}
+	if got := w.Body.String(); got != token {
+		t.Errorf("body = %q, want exactly %q with no wrapper or trailing newline", got, token)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
+}
+
+// Before submission starts we have no token, and inventing one would mean
+// serving an empty 200 that reads as "verified" to anything checking
+// shallowly. Absent is the honest answer.
+func TestOpenAIChallengeIs404WhenNoTokenIsConfigured(t *testing.T) {
+	t.Setenv("OPENAI_APPS_CHALLENGE", "")
+
+	h := testHandler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", wellKnownOpenAIChallenge, nil))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET %s = %d with no token set, want 404", wellKnownOpenAIChallenge, w.Code)
+	}
+}

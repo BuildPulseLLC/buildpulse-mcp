@@ -53,3 +53,10 @@ variable "platform_api_url" {
   }
 }
 
+# Empty until a ChatGPT plugin submission is in flight. See the
+# OPENAI_APPS_CHALLENGE entry in main.tf for why it lives here.
+variable "openai_apps_challenge" {
+  description = "Domain-ownership token issued by OpenAI's plugin submission form, served verbatim as plain text at /.well-known/openai-apps-challenge. Empty leaves that path unrouted."
+  type        = string
+  default     = ""
+}

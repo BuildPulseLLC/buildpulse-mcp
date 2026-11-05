@@ -137,7 +137,19 @@ jobs:
         # No NODE_AUTH_TOKEN: npm exchanges the GitHub OIDC token for a
         # short-lived publish credential. --provenance attaches a Sigstore
         # attestation linking this tarball to its source workflow.
-        run: npm publish --provenance --access public
+        #
+        # Idempotent: when this exact version is already on npm (a re-run
+        # after a later job failed, e.g. the registry publish on 0.2.0),
+        # skip instead of failing on the duplicate so the jobs behind it
+        # still run. npm never lets a published version be replaced, so
+        # the tarball that is live is the one that stays live.
+        run: |
+          version="${GITHUB_REF_NAME#mcp-v}"
+          if npm view "@buildpulse/mcp@$version" version >/dev/null 2>&1; then
+            echo "@buildpulse/mcp@$version is already on npm; skipping publish"
+            exit 0
+          fi
+          npm publish --provenance --access public
 
   publish-mcp-registry:
     # Must run AFTER publish-npm so the version exists on npm by the

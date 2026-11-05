@@ -28,12 +28,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # darwin targets are cross-compiled on Linux: CGO is off, the binary
+          # is static, and nothing here signs or notarizes, so a Mac buys
+          # nothing. GitHub-hosted macOS capacity cancelled both darwin jobs
+          # twice on 2026-11-05 ("job was not acquired by Runner of type
+          # hosted"), which held the whole release hostage.
           - target: darwin-amd64
-            runs-on: macos-latest
+            runs-on: ubuntu-latest
             goos: darwin
             goarch: amd64
           - target: darwin-arm64
-            runs-on: macos-latest
+            runs-on: ubuntu-latest
             goos: darwin
             goarch: arm64
           - target: linux-amd64

@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.BuildPulseLLC/buildpulse-mcp",
   "title": "BuildPulse",
-  "description": "BuildPulse for AI agents: CI runner usage, cost and savings (2x faster, half the cost, 3,000 free minutes a month) plus Test Intelligence: flaky tests, CI failures, flakiness and code coverage.",
+  "description": "BuildPulse for AI agents: CI runner usage, cost and savings, plus flaky tests, failures, coverage.",
   "icons": [
     {
       "src": "https://buildpulse.io/icon.svg",

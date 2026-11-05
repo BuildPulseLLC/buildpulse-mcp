@@ -160,6 +160,9 @@ instead by adding `"headers": { "Authorization": "Bearer bp_..." }`.
 
 | Tool | What it returns |
 |------|-----------------|
+| `get_runner_status` | Whether the organization has activated BuildPulse runners, its billing mode, and when it has not, `how_to_start` (3,000 free minutes a month) with the setup URL. |
+| `get_runner_usage` | Runner jobs, billable minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at GitHub list price with `savings_percent`, per size and provider (`days` 1-90, default 30). The `pricing` block carries the rate card. |
+| `get_runner_configs` | The runner sizes and `runs-on` labels (or CircleCI resource class / Semaphore agent type) the organization has configured. |
 | `list_my_organizations` | Every organization the token can access, with the `id` UUID to pass as `organization_id`. |
 | `list_repositories` | Repositories BuildPulse is monitoring for an organization. |
 | `find_flaky_tests` | A repository's flaky-test inventory over the last 14 days, sorted by disruptiveness or recency; filter by tags, free text, or since-date. |
@@ -187,9 +190,11 @@ repo-scoped tool takes an optional `organization_id` (the `id` from
 
 ## Prompts and resources
 
-Four guided prompts, slash-pickable in clients that support them:
-`triage_flaky_tests`, `ci_health_check`, `explain_test_failure`,
-`whats_red`.
+Five guided prompts, slash-pickable in clients that support them:
+`estimate_runner_savings` (runner status, then a 30-day usage summary or
+an estimate of what BuildPulse runners would save, priced from the API's
+rate card, ending at the setup URL), `triage_flaky_tests`,
+`ci_health_check`, `explain_test_failure`, `whats_red`.
 
 Two resource templates for pulling state into context without a tool
 call: `buildpulse://repos/{repo}/flaky-tests` and
@@ -197,6 +202,8 @@ call: `buildpulse://repos/{repo}/flaky-tests` and
 
 ## Try asking
 
+- "Are we on BuildPulse runners yet? What would they save us?"
+- "What did our runners cost last month, and how does that compare to GitHub list price?"
 - "Why is CI red on `web-client`? Show me the failing tests from the last run."
 - "Which tests in `platform-api` have been flakiest this week, and where do they fail?"
 - "How well tested is `agents`? Give me flakiness and coverage."

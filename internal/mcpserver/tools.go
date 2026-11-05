@@ -14,34 +14,38 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// overageAware wraps a tool handler so that a *PlanLimitError raised by the
-// platform API client (HTTP 402 plan_limit_exceeded) is translated into a
-// clean, SUCCESSFUL text result instead of a raw error or panic. Every tool
-// is registered through this wrapper, so the over-limit behavior is defined
-// in exactly one place and inherited uniformly — individual tools need no
-// 402-specific code.
+// overageAware wraps a tool handler so that a *PlanLimitError (HTTP 402
+// plan_limit_exceeded) or *PlanRequiredError (HTTP 403 plan_required) raised
+// by the platform API client is translated into a clear, human-readable tool
+// result instead of a raw HTTP error or panic. Every tool is registered
+// through this wrapper, so the behaviour is defined in exactly one place and
+// inherited uniformly; individual tools need no 402/403-specific code.
 //
-// Tools whose endpoints are never restricted by platform-api
-// (account/organizations, billing, usage, health) simply never receive a
-// 402, so wrapping them is a harmless no-op. Any non-402 error (and any 402
-// that isn't the documented plan_limit_exceeded shape) is passed through
-// unchanged, preserving existing behavior exactly.
+// The friendly text is returned as a plain error, which the SDK turns into
+// an IsError result whose only content is that text. It must NOT be returned
+// as a hand-built success result with zero Out: the SDK marshals Out into
+// structuredContent whenever Content is set, and clients that prefer
+// structuredContent then render the zero struct as if it were data
+// (verified live 2026-11-05: a 403 on get_runner_status came back as
+// `{"has_tenant":false,"setup_url":""}`, which reads as "no runners" rather
+// than "no access"). An error result with the explanation is the honest
+// shape: the tool did not return the requested data.
+//
+// Tools whose endpoints are never restricted by platform-api simply never
+// receive a 402, so wrapping them is a harmless no-op. Any other error (and
+// any 402/403 without the documented code) is passed through unchanged.
 func overageAware[In, Out any](h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		res, out, err := h(ctx, req, in)
 		var pe *PlanLimitError
 		if errors.As(err, &pe) {
 			var zero Out
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: planLimitText(pe)}},
-			}, zero, nil
+			return nil, zero, errors.New(planLimitText(pe))
 		}
 		var pr *PlanRequiredError
 		if errors.As(err, &pr) {
 			var zero Out
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: planRequiredText(pr)}},
-			}, zero, nil
+			return nil, zero, errors.New(planRequiredText(pr))
 		}
 		return res, out, err
 	}

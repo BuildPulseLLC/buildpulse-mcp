@@ -4,7 +4,15 @@ All notable changes to the BuildPulse MCP server. Versions are the
 `mcp-vX.Y.Z` git tags; the npm package `@buildpulse/mcp` and the MCP
 Registry entry carry the same number.
 
-## Unreleased (`main` since `mcp-v0.1.7`)
+## Unreleased (`main` since `mcp-v0.2.0`)
+
+- Plan-gate (402 `plan_limit_exceeded`, 403 `plan_required`) and rate-limit
+  outcomes are now IsError results carrying only the explanation. They used
+  to be success results with a zero-valued `structuredContent`, which
+  clients that prefer structured output rendered as data (a 403 on
+  `get_runner_status` read as `has_tenant: false`).
+
+## mcp-v0.2.0 (2026-11-05)
 
 - Runner tools: `get_runner_status`, `get_runner_usage` (1-90 days,
   default 30; totals and per-size breakdown with cost, free minutes,

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -96,15 +97,16 @@ func organizationIDFrom(in any) string {
 	return w.OrganizationID
 }
 
+// rateLimitedResult is returned as a plain error so the SDK emits an IsError
+// result carrying only this text. A hand-built CallToolResult with a zero Out
+// would also get the zero struct attached as structuredContent (see
+// overageAware), which some clients render as data.
 func rateLimitedResult[Out any]() (*mcp.CallToolResult, Out, error) {
 	var zero Out
-	return &mcp.CallToolResult{
-		IsError: true,
-		Content: []mcp.Content{&mcp.TextContent{Text: "" +
-			"This BuildPulse token has hit the per-minute tool-call limit " +
-			fmt.Sprintf("(%d calls / %s). ", toolRateLimit, toolRateWindow) +
-			"Wait a few seconds and retry. The session is still valid; nothing was revoked."}},
-	}, zero, nil
+	return nil, zero, errors.New("" +
+		"This BuildPulse token has hit the per-minute tool-call limit " +
+		fmt.Sprintf("(%d calls / %s). ", toolRateLimit, toolRateWindow) +
+		"Wait a few seconds and retry. The session is still valid; nothing was revoked.")
 }
 
 // guarded applies per-token rate limits and the tool audit log, then

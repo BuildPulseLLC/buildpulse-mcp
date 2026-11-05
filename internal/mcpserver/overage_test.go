@@ -154,9 +154,11 @@ func TestTool_Over402_ReturnsFriendlyResult(t *testing.T) {
 	// the human-readable `message` differs between them. MCP does not compute
 	// the stage — it relays whatever message platform-api sends. These cases
 	// prove the translation is stage-agnostic: any plan_limit_exceeded 402,
-	// regardless of the stage-specific message, yields the same successful,
-	// friendly, non-error tool result that surfaces the upstream message and
-	// upgradeUrl and never leaks a raw 402.
+	// regardless of the stage-specific message, yields the same friendly tool
+	// result that surfaces the upstream message and upgradeUrl and never leaks
+	// a raw 402. It is an IsError result on purpose: the tool returned no data,
+	// and a success result would carry a zero-valued structuredContent that
+	// clients render as if it were real (see overageAware).
 	cases := []struct {
 		name    string
 		body    string
@@ -191,8 +193,11 @@ func TestTool_Over402_ReturnsFriendlyResult(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CallTool returned a protocol error: %v", err)
 			}
-			if res.IsError {
-				t.Fatalf("over-limit must be a SUCCESSFUL result, got IsError=true: %s", resultText(res))
+			if !res.IsError {
+				t.Fatalf("over-limit must be an IsError result (no data was returned), got success: %s", resultText(res))
+			}
+			if res.StructuredContent != nil {
+				t.Fatalf("over-limit must not carry structuredContent (a zero struct reads as data), got %v", res.StructuredContent)
 			}
 			text := resultText(res)
 			for _, want := range []string{

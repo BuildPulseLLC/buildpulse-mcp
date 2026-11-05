@@ -238,8 +238,14 @@ func TestRunnerTools_PlanRequired403IsFriendly(t *testing.T) {
 	cs := newTestServerSession(t, platform)
 	for _, tool := range []string{"get_runner_status", "get_runner_usage", "get_runner_configs"} {
 		res := callTool(t, cs, tool, nil)
-		if res.IsError {
-			t.Errorf("%s: plan_required must be a friendly non-error result, got error %q", tool, resultText(res))
+		if !res.IsError {
+			t.Errorf("%s: plan_required must be an IsError result (no data), got success %q", tool, resultText(res))
+		}
+		// The live bug this guards: a zero-valued structuredContent such as
+		// {"has_tenant":false,"setup_url":""} reads as "no runners" instead of
+		// "no access".
+		if res.StructuredContent != nil {
+			t.Errorf("%s: plan_required must not carry structuredContent, got %v", tool, res.StructuredContent)
 		}
 		txt := resultText(res)
 		if !strings.Contains(txt, "runner subscription") || !strings.Contains(txt, "https://buildpulse.io/pricing") {

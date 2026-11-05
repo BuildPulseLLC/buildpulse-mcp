@@ -4,7 +4,22 @@ All notable changes to the BuildPulse MCP server. Versions are the
 `mcp-vX.Y.Z` git tags; the npm package `@buildpulse/mcp` and the MCP
 Registry entry carry the same number.
 
-## Unreleased (`main` since `mcp-v0.1.6`)
+## Unreleased (`main` since `mcp-v0.1.7`)
+
+- Runner tools: `get_runner_status`, `get_runner_usage` (1-90 days,
+  default 30; totals and per-size breakdown with cost, free minutes,
+  p50/p90 duration, queue wait and savings versus GitHub list price) and
+  `get_runner_configs`, backed by platform-api `/api/v1/runners/*`.
+- `estimate_runner_savings` prompt: status, then either a 30-day usage
+  summary or an estimate from recent CI runs priced from the API's
+  rate card, ending at the runner setup URL.
+- Server instructions, README, npm description and keywords, MCP Registry
+  manifest, Smithery manifest, hosted landing page and `llms.txt` now lead
+  with runners and Test Intelligence.
+- platform-api's `403 plan_required` (valid token, plan without API
+  access) is rendered as a friendly tool result naming what unlocks it.
+
+## mcp-v0.1.7 (previously listed as unreleased since `mcp-v0.1.6`)
 
 - Hosted server serves a public landing page at `/`, plus `robots.txt`,
   `sitemap.xml`, and `llms.txt`; unknown paths still 404.

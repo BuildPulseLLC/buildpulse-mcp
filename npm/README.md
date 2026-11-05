@@ -5,11 +5,15 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/BuildPulseLLC/buildpulse-mcp/blob/main/LICENSE)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.BuildPulseLLC%2Fbuildpulse--mcp-3e82f7)](https://registry.modelcontextprotocol.io/v0/servers?search=buildpulse)
 
-Model Context Protocol server for [BuildPulse](https://buildpulse.io) CI
-test analytics. Nine read-only tools that surface flaky tests, recent CI
-failures, per-run test results, flakiness % and code-coverage % for your
-repositories — from Claude, ChatGPT, Cursor, VS Code, Windsurf, Cline,
-Continue, Zed, and any other MCP-aware agent.
+Model Context Protocol server for [BuildPulse](https://buildpulse.io):
+faster, cheaper CI runners for GitHub Actions, CircleCI and Semaphore
+(about 2x faster at half the cost, 3,000 free minutes a month) with Test
+Intelligence built in. Twelve read-only tools: runner usage, cost and
+savings versus GitHub list price, configured runner labels, and whether
+your organization is on BuildPulse runners yet, plus flaky tests, recent
+CI failures, per-run test results, flakiness % and code-coverage % for
+your repositories. Works from Claude, ChatGPT, Cursor, VS Code, Windsurf,
+Cline, Continue, Zed, and any other MCP-aware agent.
 
 Source, threat model, and changelog:
 <https://github.com/BuildPulseLLC/buildpulse-mcp>.

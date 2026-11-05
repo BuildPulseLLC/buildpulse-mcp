@@ -69,6 +69,9 @@ func TestLandingPage(t *testing.T) {
 	// Every registered tool must be advertised on the landing page —
 	// keep this list in sync with internal/mcpserver/tools.go.
 	for _, tool := range []string{
+		"get_runner_status",
+		"get_runner_usage",
+		"get_runner_configs",
 		"list_my_organizations",
 		"list_repositories",
 		"find_flaky_tests",

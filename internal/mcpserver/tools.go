@@ -36,6 +36,13 @@ func overageAware[In, Out any](h mcp.ToolHandlerFor[In, Out]) mcp.ToolHandlerFor
 				Content: []mcp.Content{&mcp.TextContent{Text: planLimitText(pe)}},
 			}, zero, nil
 		}
+		var pr *PlanRequiredError
+		if errors.As(err, &pr) {
+			var zero Out
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: planRequiredText(pr)}},
+			}, zero, nil
+		}
 		return res, out, err
 	}
 }
@@ -57,6 +64,26 @@ func planLimitText(e *PlanLimitError) string {
 		"Only read access to this data is paused until you upgrade.")
 	if u := strings.TrimSpace(e.UpgradeURL); u != "" {
 		b.WriteString("\n\nUpgrade your plan to restore access: ")
+		b.WriteString(u)
+	}
+	return b.String()
+}
+
+// planRequiredText renders platform-api's 403 plan_required for the model:
+// the credential is fine, the organization's plan is what says no, and
+// either a paid Test Intelligence plan or a paid runner subscription unlocks
+// the API and this MCP. Message and URL come from platform-api.
+func planRequiredText(e *PlanRequiredError) string {
+	msg := strings.TrimSpace(e.Message)
+	if msg == "" {
+		msg = "This BuildPulse organization's plan does not include API or MCP access. " +
+			"A paid Test Intelligence plan or a paid BuildPulse runner subscription unlocks it."
+	}
+	var b strings.Builder
+	b.WriteString(msg)
+	b.WriteString("\n\nThe sign-in itself worked; this is a plan setting, not a credential problem.")
+	if u := strings.TrimSpace(e.UpgradeURL); u != "" {
+		b.WriteString("\n\nPlans and runner pricing: ")
 		b.WriteString(u)
 	}
 	return b.String()

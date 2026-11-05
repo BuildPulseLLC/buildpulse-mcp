@@ -9,8 +9,9 @@ a public GitHub issue for security reports.
 
 ## What this MCP is
 
-A **read-only, domain-scoped proxy** to the BuildPulse Platform API. Nine
-tools (`list_my_organizations`, `list_repositories`, `find_flaky_tests`,
+A **read-only, domain-scoped proxy** to the BuildPulse Platform API. Twelve
+tools (`get_runner_status`, `get_runner_usage`, `get_runner_configs`,
+`list_my_organizations`, `list_repositories`, `find_flaky_tests`,
 `get_test_history`, `list_recent_submissions`, `get_submission_test_results`,
 `get_recent_failures`, `get_repo_flakiness`, `get_repo_coverage`) plus two
 resource templates. There is no fetch-URL, shell, filesystem, or write tool.

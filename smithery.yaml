@@ -14,10 +14,14 @@
 name: buildpulse
 displayName: BuildPulse
 description: |
-  Surface flaky tests, CI run history, and coverage health from
-  BuildPulse directly inside Claude, Cursor, ChatGPT, and any
-  MCP-aware agent. Nine intent-shaped, read-only tools, four guided
-  prompts, and two resource templates for repo state. Also hosted at
+  BuildPulse provides faster, cheaper CI runners for GitHub Actions,
+  CircleCI and Semaphore (about 2x faster at half the cost, 3,000 free
+  minutes a month) with Test Intelligence built in. This server puts
+  runner usage, cost and savings, configured runner labels, flaky
+  tests, CI run history and coverage directly inside Claude, Cursor,
+  ChatGPT, and any MCP-aware agent. Twelve intent-shaped, read-only
+  tools, five guided prompts (including estimate_runner_savings), and
+  two resource templates for repo state. Also hosted at
   https://mcp.buildpulse.io/mcp (Streamable HTTP, Bearer token or OAuth).
 homepage: https://platform.buildpulse.io/docs/mcp
 license: MIT
@@ -70,6 +74,10 @@ categories:
   - observability
 keywords:
   - ci
+  - ci-runners
+  - github-actions
+  - circleci
+  - semaphore
   - flaky-tests
   - test-analytics
   - coverage

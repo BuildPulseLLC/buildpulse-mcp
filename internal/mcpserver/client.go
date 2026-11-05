@@ -43,7 +43,42 @@ const (
 	// PR — `{"code":"plan_limit_exceeded","message":...,"upgradeUrl":...}` —
 	// so this constant must not change without coordinating there.
 	planLimitCode = "plan_limit_exceeded"
+
+	// planRequiredCode is the code platform-api sends with HTTP 403 when the
+	// credential is valid but the organization's plan does not include API /
+	// MCP access (a paid Test Intelligence plan or a paid runner subscription
+	// unlocks it). Owned by platform-api middleware/auth.go.
+	planRequiredCode = "plan_required"
 )
+
+// PlanRequiredError carries platform-api's 403 plan_required body: the token
+// works, the organization's plan does not include the API. Tool handlers turn
+// it into a friendly result (overageAware) that says what unlocks access.
+type PlanRequiredError struct {
+	Message    string
+	UpgradeURL string
+}
+
+func (e *PlanRequiredError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "plan required"
+}
+
+// parsePlanRequired interprets a 403 body; nil unless it is the documented
+// plan_required JSON.
+func parsePlanRequired(body []byte) *PlanRequiredError {
+	var b struct {
+		Code       string `json:"code"`
+		Message    string `json:"message"`
+		UpgradeURL string `json:"upgradeUrl"`
+	}
+	if err := json.Unmarshal(body, &b); err != nil || b.Code != planRequiredCode {
+		return nil
+	}
+	return &PlanRequiredError{Message: b.Message, UpgradeURL: b.UpgradeURL}
+}
 
 // PlanLimitError is returned by the client when a data-read endpoint
 // responds with HTTP 402 and the documented plan_limit_exceeded body. It
@@ -272,7 +307,11 @@ func (c *Client) Get(ctx context.Context, path string, params url.Values) ([]byt
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
-		return nil, "", fmt.Errorf("authentication failed (401) — token is missing, invalid, or your BuildPulse organization has no active plan")
+		return nil, "", fmt.Errorf("authentication failed (401): the token is missing, invalid or expired")
+	case http.StatusForbidden:
+		if pe := parsePlanRequired(body); pe != nil {
+			return nil, "", pe
+		}
 	case http.StatusNotFound:
 		return nil, "", fmt.Errorf("not found (404) — the repository or test does not exist, or is not in your organization")
 	case http.StatusPaymentRequired:

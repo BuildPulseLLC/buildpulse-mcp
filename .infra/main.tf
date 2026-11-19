@@ -82,6 +82,12 @@ resource "aws_ecs_task_definition" "definition" {
   memory                   = 512
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
+  # Fargate ARM64 is 20% cheaper than x86. The image is built on an arm64
+  # runner (.github/workflows/build-and-push.yml); change both together.
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
   # Runtime identity exposed to the container. Scoped least-privilege role
   # (DynamoDB on the MCP OAuth tables + Encrypt/Decrypt on the refresh CMK
   # only) — NOT the shared *:* execution role, which stays as

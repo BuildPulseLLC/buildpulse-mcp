@@ -48,3 +48,7 @@ builds `cmd/api` to ECR. Add a sibling job that:
 ## Region
 
 `us-west-2`. (Same as everything else — never default to `us-east-1`.)
+
+## Architecture
+
+The task runs on Fargate ARM64 (`runtime_platform` in `main.tf`), and the image is built on an arm64 runner (`.github/workflows/build-and-push.yml`). Change the two together: an x86 image on an ARM64 task fails to start.

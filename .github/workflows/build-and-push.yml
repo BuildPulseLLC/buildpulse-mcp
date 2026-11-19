@@ -44,7 +44,10 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    # arm64 runner: the ECS task runs on Fargate ARM64 (.infra/main.tf
+    # runtime_platform), and docker build produces the builder's native
+    # architecture. Change this and runtime_platform together.
+    runs-on: bp-ubuntu-latest-arm64-2x
     environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     steps:
       - name: Checkout code

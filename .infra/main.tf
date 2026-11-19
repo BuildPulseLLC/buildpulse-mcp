@@ -106,6 +106,13 @@ resource "aws_ecs_task_definition" "definition" {
         { name = "COGNITO_DOMAIN", value = "https://${data.terraform_remote_state.environment.outputs.cognito.user_pool_domain}" },
         { name = "COGNITO_CLIENT_ID", value = data.terraform_remote_state.environment.outputs.cognito.mcp_client_id },
         { name = "MCP_ISSUER", value = "https://${var.domain[var.environment]}" },
+        # OpenAI plugin domain-ownership challenge. The token is issued by
+        # OpenAI's submission form, so it is empty until a submission is in
+        # flight; empty means cmd/mcp-remote/main.go does not register the
+        # route at all and /.well-known/openai-apps-challenge stays a 404.
+        # Wiring it here rather than hardcoding keeps turning it on to an
+        # apply, not a code change and image build, during a submission.
+        { name = "OPENAI_APPS_CHALLENGE", value = var.openai_apps_challenge },
         # DocumentDB — needed so cmd/mcp-remote/mongo.go can resolve
         # the Cognito user → memberships → org UUIDs on OAuth callback
         # and persist the resulting mcpSession. Without this, OAuth

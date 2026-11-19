@@ -75,6 +75,22 @@ const (
 	// would need standing read access to the BuildPulseLLC org. This grants
 	// them nothing beyond proof that we serve this domain.
 	wellKnownGlama = "/.well-known/glama.json"
+
+	// wellKnownOpenAIChallenge proves to OpenAI that we control this origin,
+	// which is a precondition for submitting the MCP server as a ChatGPT
+	// plugin. OpenAI's submission form issues the token; we echo it back
+	// here as PLAIN TEXT.
+	//
+	// Plain text matters: the docs ask for the bare token, not JSON and not
+	// a list, so this deliberately does not use writeJSON the way the Glama
+	// route next to it does. A JSON-wrapped token fails the check.
+	//
+	// The token arrives only once submission starts, so the route is wired
+	// now and reads OPENAI_APPS_CHALLENGE at startup. Unset, it 404s like
+	// any unknown path, which is the correct answer before we have a token
+	// and means turning it on is an env var plus a restart, not a deploy of
+	// new code on the critical path of a submission.
+	wellKnownOpenAIChallenge = "/.well-known/openai-apps-challenge"
 )
 
 func main() {
@@ -412,6 +428,17 @@ func newHandler(d serverDeps) http.Handler {
 			"claim":   "glama_claim_TLPrMCHWZpd0JXo1e4XzroB_vTjdJjJ8",
 		})
 	})
+
+	// OpenAI plugin ownership proof. See wellKnownOpenAIChallenge.
+	// Read once here rather than per request: the value cannot change
+	// without a restart anyway, and this keeps the unset case to a single
+	// branch at startup.
+	if challenge := strings.TrimSpace(os.Getenv("OPENAI_APPS_CHALLENGE")); challenge != "" {
+		mux.HandleFunc("GET "+wellKnownOpenAIChallenge, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte(challenge))
+		})
+	}
 
 	return withRequestID(withLogging(withCORS(mux)))
 }

@@ -25,7 +25,7 @@ func TestEveryToolHasTitleAndReadOnlyHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	const wantTools = 9
+	const wantTools = 12
 	if len(res.Tools) != wantTools {
 		t.Errorf("registered %d tools, want %d — update the landing page, llms.txt and READMEs if this changed", len(res.Tools), wantTools)
 	}

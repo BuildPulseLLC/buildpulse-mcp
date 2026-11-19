@@ -1,8 +1,8 @@
 # BuildPulse MCP Server
 
-> Model Context Protocol server for BuildPulse CI test analytics. Nine read-only tools that surface flaky tests, recent CI failures, per-run test results, flakiness %, and code-coverage % for a repository — callable from Claude, ChatGPT, Cursor, VS Code, Windsurf, Cline, and any MCP-aware agent.
+> Model Context Protocol server for BuildPulse. BuildPulse provides faster, cheaper CI runners for GitHub Actions, CircleCI and Semaphore (about 2x faster at half the cost, 3,000 free minutes a month, no card) with Test Intelligence built in: flaky-test detection, coverage and CI metrics. Twelve read-only tools: runner usage, cost and savings versus GitHub list price, configured runner labels, runner activation status, plus flaky tests, recent CI failures, per-run test results, flakiness % and code-coverage % for a repository. Callable from Claude, ChatGPT, Cursor, VS Code, Windsurf, Cline, and any MCP-aware agent.
 
-The server is hosted at `https://mcp.buildpulse.io/mcp` (Streamable HTTP) and published to npm as `@buildpulse/mcp` (stdio). Both transports expose the same nine tools, four prompts, and two resource templates. Authentication is a BuildPulse API token (`bp_<64-hex>`; legacy 40-hex tokens also work) sent as `Authorization: Bearer <token>`, or OAuth 2.1 with PKCE and dynamic client registration for hosted clients. Every tool is read-only and scoped to the organizations the token can access.
+The server is hosted at `https://mcp.buildpulse.io/mcp` (Streamable HTTP) and published to npm as `@buildpulse/mcp` (stdio). Both transports expose the same twelve tools, five prompts, and two resource templates. An organization that has not activated runners can be pointed at `https://buildpulse.io/organizations/{orgId}/runners/setup`. Authentication is a BuildPulse API token (`bp_<64-hex>`; legacy 40-hex tokens also work) sent as `Authorization: Bearer <token>`, or OAuth 2.1 with PKCE and dynamic client registration for hosted clients. Every tool is read-only and scoped to the organizations the token can access.
 
 ## Connect
 
@@ -14,7 +14,10 @@ The server is hosted at `https://mcp.buildpulse.io/mcp` (Streamable HTTP) and pu
 
 ## Tools
 
-- list_my_organizations: every organization the token can access; returns the `id` UUID used as `organization_id` on repo-scoped calls.
+- get_runner_status: whether the organization has activated BuildPulse runners, its billing mode, and when it has not, a `how_to_start` sentence (3,000 free minutes a month) with the setup URL.
+- get_runner_usage: runner jobs, billable minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at GitHub list price with the savings percentage, per size and provider; `days` 1-90, default 30. The `pricing` block carries the rate card.
+- get_runner_configs: the runner sizes and `runs-on` labels (or CircleCI resource class / Semaphore agent type) the organization has configured.
+- list_my_organizations: every organization the token can access; returns the `id` UUID used as `organization_id` on org- and repo-scoped calls.
 - list_repositories: repositories BuildPulse monitors for an organization.
 - find_flaky_tests: a repository's flaky-test inventory over the last 14 days, sorted by disruptiveness or recency.
 - get_test_history: recent disruption events for one test, with build URL and commit SHA.
@@ -28,6 +31,7 @@ Multi-tenant rule: if `list_my_organizations` returns two or more organizations,
 
 ## Prompts
 
+- estimate_runner_savings: runner status first; with no tenant, estimate CI minutes from recent runs and price them at BuildPulse versus GitHub list rate (prices from the API), then the setup URL; with a tenant, the last 30 days of usage and savings.
 - triage_flaky_tests: rank a repository's flaky tests and propose next steps.
 - ci_health_check: flakiness + coverage snapshot for a repository.
 - explain_test_failure: walk through one test's recent failures.
@@ -42,7 +46,8 @@ Multi-tenant rule: if `list_my_organizations` returns two or more organizations,
 
 ## BuildPulse
 
-- [BuildPulse](https://buildpulse.io): CI test analytics — flaky-test detection, quarantine, code coverage, engineering metrics, and self-hosted CI runners.
+- [BuildPulse](https://buildpulse.io): CI runners for GitHub Actions, CircleCI and Semaphore with Test Intelligence included: flaky-test detection, quarantine, code coverage, engineering metrics.
+- [Runners](https://buildpulse.io/products/runners): 2x faster, half the cost, 3,000 free minutes a month; benchmarks published.
 - [Products](https://buildpulse.io/products): what BuildPulse ships.
-- [Pricing](https://buildpulse.io/pricing): plans; API and MCP access is included on paid plans.
+- [Pricing](https://buildpulse.io/pricing): runner rates and Test Intelligence plans; API and MCP access come with a paid Test Intelligence plan or a paid runner subscription.
 - [Support](mailto:support@buildpulse.io): support@buildpulse.io.

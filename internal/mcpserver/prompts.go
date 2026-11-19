@@ -17,6 +17,16 @@ import (
 // prompts.
 func registerPrompts(s *mcp.Server) {
 	s.AddPrompt(&mcp.Prompt{
+		Name:        "estimate_runner_savings",
+		Title:       "Estimate BuildPulse runner savings",
+		Description: "Work out what BuildPulse runners would save (or are saving) this organization. If runners are not activated yet, estimate CI minutes from recent runs and price them at BuildPulse versus GitHub list rate, then point at the setup page. If they are, summarise the last 30 days of usage, cost and savings.",
+		Arguments: []*mcp.PromptArgument{
+			{Name: "organization_id", Description: "Organization UUID from list_my_organizations (required for multi-org sessions)", Required: false},
+			{Name: "repository", Description: "Optional: a repository name to sample CI runs from when estimating; otherwise the busiest repositories are used", Required: false},
+		},
+	}, estimateRunnerSavingsPrompt)
+
+	s.AddPrompt(&mcp.Prompt{
 		Name:        "triage_flaky_tests",
 		Title:       "Triage flaky tests",
 		Description: "Walk through the flakiest tests in a repository and propose next actions (quarantine, owner assignment, root-cause hypotheses).",
@@ -52,6 +62,40 @@ func registerPrompts(s *mcp.Server) {
 			{Name: "name", Description: "Repository name", Required: true},
 		},
 	}, whatsRedPrompt)
+}
+
+func estimateRunnerSavingsPrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	orgID := req.Params.Arguments["organization_id"]
+	repo := req.Params.Arguments["repository"]
+	orgArg := ""
+	if orgID != "" {
+		orgArg = " with `organization_id=\"" + orgID + "\"`"
+	}
+	repoStep := "call `list_repositories`" + orgArg + " and pick the two or three repositories that look busiest (most recent activity)"
+	if repo != "" {
+		repoStep = "use the repository **" + repo + "**"
+	}
+	return &mcp.GetPromptResult{
+		Description: "Estimate BuildPulse runner savings",
+		Messages: []*mcp.PromptMessage{
+			{
+				Role: "user",
+				Content: &mcp.TextContent{
+					Text: "" +
+						"Estimate what BuildPulse runners save this organization. Every number must come from a tool response; do not quote a price you were not given.\n\n" +
+						"1. Call `get_runner_status`" + orgArg + ".\n\n" +
+						"2. If `has_tenant` is true: call `get_runner_usage`" + orgArg + " with `days=30`. Report, from `totals`: jobs, billable_minutes, cost_usd, free_minutes_used and free_minutes_value_usd, net_cost_usd, github_list_price_usd and savings_percent, and p50/p90 job duration. " +
+						"Then list the top entries of `breakdown` (runner size, provider, minutes, net cost, savings). Mention that `pricing.free_minutes_per_month` free minutes renew every month. Link `web_url`. Stop here.\n\n" +
+						"3. If `has_tenant` is false, the organization is not on BuildPulse runners yet. Build an estimate:\n" +
+						"   a. Call `get_runner_usage`" + orgArg + " anyway: its `pricing` block carries the published offer. Use `pricing.rate_card` for the per-minute prices (`buildpulse_usd_per_minute` and `github_usd_per_minute` for the matching size), `pricing.free_minutes_per_month` for the monthly grant and `pricing.speedup_vs_hosted` for the speed-up.\n" +
+						"   b. If the user already knows their monthly CI minutes (the GitHub Actions usage page shows it), use that number and skip c.\n" +
+						"   c. Otherwise estimate it: " + repoStep + ", call `list_recent_submissions` with `limit=50` for each to count how many CI runs land per day (use `recorded_at`), and call `get_submission_test_results` on two or three recent runs to add up `duration_us` per run as the test time of one job. Monthly minutes = runs per day x 30 x minutes per run. State plainly that this is a lower bound: it counts test time only, not checkout, install or build steps, and only runs that upload to BuildPulse.\n" +
+						"   d. Assume the x64 2 vCPU size unless the user says otherwise. GitHub cost = minutes x `github_usd_per_minute`. BuildPulse cost = max(0, minutes / `speedup_vs_hosted` - `free_minutes_per_month`) x `buildpulse_usd_per_minute`: the same work finishes in fewer minutes and the first free minutes are not billed. Also show the figure without the speed-up so the saving from price alone is visible.\n" +
+						"   e. Present both costs, the monthly and yearly saving, the assumptions in one short list, and finish with the activation link from `setup_url` (https://buildpulse.io/organizations/{orgId}/runners/setup): it is a one-line change to the workflow, 3,000 free minutes a month, no card required.",
+				},
+			},
+		},
+	}, nil
 }
 
 func triageFlakyTestsPrompt(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {

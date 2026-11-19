@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BuildPulse MCP Server</title>
-<meta name="description" content="Hosted Model Context Protocol server for BuildPulse CI test analytics. Nine read-only tools for flaky tests, recent CI failures, per-run results, flakiness and coverage — for Claude, ChatGPT, Cursor, VS Code, Windsurf, and Cline.">
+<meta name="description" content="Hosted Model Context Protocol server for BuildPulse: faster, cheaper CI runners with Test Intelligence built in. Twelve read-only tools for runner usage and savings, flaky tests, recent CI failures, per-run results, flakiness and coverage, for Claude, ChatGPT, Cursor, VS Code, Windsurf, and Cline.">
 <link rel="canonical" href="https://mcp.buildpulse.io/">
 <link rel="icon" href="https://buildpulse.io/icon.svg" type="image/svg+xml">
 <meta name="robots" content="index,follow">
@@ -22,7 +22,7 @@
   "@type": "SoftwareApplication",
   "name": "BuildPulse MCP Server",
   "alternateName": "@buildpulse/mcp",
-  "description": "Model Context Protocol server for BuildPulse CI test analytics: flaky tests, recent CI failures, per-run test results, flakiness % and code-coverage % as read-only tools for AI agents.",
+  "description": "Model Context Protocol server for BuildPulse: CI runner usage, cost and savings, runner activation status, flaky tests, recent CI failures, per-run test results, flakiness % and code-coverage % as read-only tools for AI agents.",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Any",
   "url": "https://mcp.buildpulse.io/",
@@ -80,7 +80,7 @@
 <header>
   <p class="brand">BuildPulse</p>
   <h1>BuildPulse MCP Server</h1>
-  <p>A hosted <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server that puts BuildPulse CI test analytics inside your AI agent. Nine read-only tools cover flaky-test inventory, recent CI failures, per-run test results, flakiness % and code-coverage % for every repository your token can see. Works with Claude, ChatGPT, Cursor, VS Code, Windsurf, Cline, and any MCP-aware client.</p>
+  <p>A hosted <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server that puts BuildPulse inside your AI agent. BuildPulse provides faster, cheaper CI runners for GitHub Actions, CircleCI and Semaphore (about 2x faster at half the cost, 3,000 free minutes a month) with Test Intelligence built in. Twelve read-only tools cover runner usage, cost and savings, configured runner labels, runner activation status, flaky-test inventory, recent CI failures, per-run test results, flakiness % and code-coverage % for every organization and repository your token can see. Works with Claude, ChatGPT, Cursor, VS Code, Windsurf, Cline, and any MCP-aware client.</p>
   <p class="endpoint">Endpoint: <code>https://mcp.buildpulse.io/mcp</code></p>
 </header>
 
@@ -127,6 +127,9 @@
 
 <h2>Tools</h2>
 <ul class="tools">
+  <li><code>get_runner_status</code>: whether the organization has activated BuildPulse runners, its billing mode, and when it has not, how to start (3,000 free minutes a month) with the setup URL.</li>
+  <li><code>get_runner_usage</code>: runner jobs, minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at GitHub list price with the savings percentage, per size and provider (1 to 90 days, default 30).</li>
+  <li><code>get_runner_configs</code>: the runner sizes and <code>runs-on</code> labels the organization has configured.</li>
   <li><code>list_my_organizations</code> — every organization the token can access; returns the <code>id</code> to pass as <code>organization_id</code>.</li>
   <li><code>list_repositories</code> — repositories BuildPulse monitors for an organization.</li>
   <li><code>find_flaky_tests</code> — a repository's flaky-test inventory over the last 14 days, by disruptiveness or recency.</li>
@@ -137,7 +140,7 @@
   <li><code>get_repo_flakiness</code> — current flakiness % for a repository (last 14 days).</li>
   <li><code>get_repo_coverage</code> — current code-coverage % from the latest report.</li>
 </ul>
-<p>Sessions with access to more than one organization pass <code>organization_id</code> on every repo-scoped call; the server never guesses which tenant you meant. Four guided prompts ship alongside: <code>triage_flaky_tests</code>, <code>ci_health_check</code>, <code>explain_test_failure</code>, <code>whats_red</code>.</p>
+<p>Sessions with access to more than one organization pass <code>organization_id</code> on every repo-scoped call; the server never guesses which tenant you meant. Five guided prompts ship alongside: <code>estimate_runner_savings</code>, <code>triage_flaky_tests</code>, <code>ci_health_check</code>, <code>explain_test_failure</code>, <code>whats_red</code>.</p>
 
 <h2>Try asking</h2>
 <ul>

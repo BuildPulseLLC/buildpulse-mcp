@@ -4,7 +4,7 @@
 # Go image, copy into a distroless runtime, run as nonroot. Image is
 # pushed to the `mcp-remote` ECR repo and deployed by `.infra/mcp/`.
 
-FROM golang:1.27.2-bookworm AS build
+FROM golang:1.27.4-bookworm AS build
 
 WORKDIR /src
 
@@ -38,7 +38,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 # Descriptions here must stay comma-free only if reused as Terraform
 # tags; as a LABEL they are free text.
 LABEL org.opencontainers.image.title="BuildPulse MCP Server" \
-      org.opencontainers.image.description="Hosted Model Context Protocol server for BuildPulse CI test analytics: flaky tests, recent failures, flakiness and coverage as read-only tools." \
+      org.opencontainers.image.description="Hosted Model Context Protocol server for BuildPulse: CI runner usage and savings plus Test Intelligence (flaky tests, recent failures, flakiness and coverage) as read-only tools." \
       org.opencontainers.image.source="https://github.com/BuildPulseLLC/buildpulse-mcp" \
       org.opencontainers.image.url="https://mcp.buildpulse.io" \
       org.opencontainers.image.documentation="https://platform.buildpulse.io/docs/mcp" \

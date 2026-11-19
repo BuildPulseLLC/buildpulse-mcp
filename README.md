@@ -2,10 +2,21 @@
 
 <a href="https://buildpulse.io/mcp?ref=github-badge"><img src=".github/runs-on-buildpulse-compact.svg" alt="Runs on BuildPulse" height="28"></a>
 
-> Model Context Protocol server for the [BuildPulse](https://buildpulse.io)
-> Platform API. Surface flaky tests, CI run history, and coverage health
-> in Claude Desktop, Cursor, ChatGPT, Cline, Windsurf, Continue, Zed,
-> VS Code Copilot, and any other MCP-aware AI agent.
+> Model Context Protocol server for [BuildPulse](https://buildpulse.io):
+> faster, cheaper CI runners for GitHub Actions, CircleCI and Semaphore,
+> with Test Intelligence built in. Read runner usage, cost and savings,
+> find out whether an organization is on BuildPulse runners yet, and
+> surface flaky tests, CI run history, failures and coverage in Claude,
+> Cursor, ChatGPT, Cline, Windsurf, Continue, Zed, VS Code Copilot, and
+> any other MCP-aware AI agent.
+
+BuildPulse runners finish jobs about twice as fast at half the cost of
+the provider's hosted runners ($0.004 a minute on x64 2 vCPU). Every
+organization gets 3,000 free minutes a month, no card required, and Test
+Intelligence (flaky-test detection, coverage, CI metrics) is included
+with every minute. An organization that has not activated runners can be
+pointed at `https://buildpulse.io/organizations/{orgId}/runners/setup`;
+the `estimate_runner_savings` prompt works out what they would save.
 
 [![npm version](https://img.shields.io/npm/v/@buildpulse/mcp.svg)](https://www.npmjs.com/package/@buildpulse/mcp)
 [![npm downloads](https://img.shields.io/npm/dm/@buildpulse/mcp.svg)](https://www.npmjs.com/package/@buildpulse/mcp)
@@ -40,6 +51,9 @@ when you need one.
 
 ## Try asking
 
+- "Are we on BuildPulse runners yet? What would they save us?"
+- "What did our runners cost last month, and how does that compare to GitHub list price?"
+- "Which BuildPulse runner labels can I use in this workflow?"
 - "Why is CI red on `web-client`? Show me the failing tests from the last run."
 - "Which tests in `platform-api` have been flakiest this week, and where do they fail?"
 - "How well tested is `agents`? Give me flakiness and coverage."
@@ -188,8 +202,9 @@ org's `id` UUID, discoverable via `list_my_organizations`):
 - **Single-org tokens** — omit `organization_id`. It auto-defaults to your
   one organization. Nothing changes; you never need to think about orgs.
 - **Multi-org sessions** (`list_my_organizations` returns 2+ orgs) — you
-  **must** pass `organization_id` on every repo-scoped call
-  (`list_repositories`, `find_flaky_tests`, `get_test_history`,
+  **must** pass `organization_id` on every org- or repo-scoped call
+  (`get_runner_status`, `get_runner_usage`, `get_runner_configs`,
+  `list_repositories`, `find_flaky_tests`, `get_test_history`,
   `list_recent_submissions`, `get_submission_test_results`,
   `get_recent_failures`, `get_repo_flakiness`, `get_repo_coverage`). The
   org is **not** auto-selected — omitting it returns an error that lists
@@ -204,6 +219,9 @@ getting confusingly empty results.
 
 | Tool | Purpose |
 |------|---------|
+| `get_runner_status` | Whether the organization has activated BuildPulse runners, its billing mode, and when it has not, `how_to_start` (3,000 free minutes a month) with the setup URL. |
+| `get_runner_usage` | Runner jobs, billable minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at GitHub list price with `savings_percent`, per size and provider; `days` 1-90 (default 30). The `pricing` block carries the rate card. |
+| `get_runner_configs` | The runner sizes and `runs-on` labels (or CircleCI resource class / Semaphore agent type) the organization has configured. |
 | `list_my_organizations` | Enumerate the organizations this token can access; get the `id` (UUID) to pass as `organization_id`. |
 | `list_repositories` | List repositories in an organization. |
 | `find_flaky_tests` | Search a repository's flaky test inventory; filter by tags, recency, free-text. |
@@ -214,9 +232,10 @@ getting confusingly empty results.
 | `get_repo_flakiness` | Current flakiness % over the last 14 days. `-1` means no recent results. |
 | `get_repo_coverage` | Current coverage % from the latest uploaded report. `-1` means no report. |
 
-Repo-scoped tools accept an `organization_id` argument — required for
-multi-org sessions, optional (auto-defaulted) for single-org tokens. See
-[Organizations](#organizations-multi-tenant) above.
+Runner tools are organization-scoped (no repository argument). Every
+org- or repo-scoped tool accepts an `organization_id` argument, required
+for multi-org sessions and optional (auto-defaulted) for single-org
+tokens. See [Organizations](#organizations-multi-tenant) above.
 
 Every output that names a test or repo includes a `web_url` deep-link
 back to the BuildPulse web app — the same polish Sentry / Atlassian
@@ -224,9 +243,10 @@ use in their MCP responses.
 
 ## Prompts
 
-The server also ships four guided prompts (slash-pickable in clients
+The server also ships five guided prompts (slash-pickable in clients
 that support them):
 
+- `/estimate_runner_savings`: fetches runner status; with no tenant, estimates CI minutes from recent runs and prices them at BuildPulse versus GitHub list rate (every price read from the API's `pricing` block), then points at the setup URL; with a tenant, summarises the last 30 days of usage and savings.
 - `/triage_flaky_tests`
 - `/ci_health_check`
 - `/explain_test_failure`

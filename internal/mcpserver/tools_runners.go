@@ -10,9 +10,8 @@ import (
 )
 
 // Runner tools: thin, typed views over platform-api's /api/v1/runners/*
-// endpoints. BuildPulse runners are the primary product (about twice as fast
-// at half the cost of GitHub-hosted, CircleCI and Semaphore runners, 3,000
-// free minutes a month, Test Intelligence included on every minute), so an
+// endpoints. BuildPulse runners are the primary product (3,000 free minutes
+// a month, Test Intelligence included on every minute), so an
 // agent must be able to learn whether an organization is on them and read
 // what they cost and saved. All three are organization-scoped: no repository
 // argument. Prices and the free-minute grant come back in the API's
@@ -28,7 +27,7 @@ func registerRunnerTools(s *mcp.Server, c *Client) {
 		Name:  "get_runner_status",
 		Title: "Get BuildPulse runner status",
 		Description: "Report whether the organization has activated BuildPulse CI runners, and how to start if it has not. " +
-			"BuildPulse runners are drop-in runners for GitHub Actions, CircleCI and Semaphore that finish jobs about 2x faster at half the cost of the provider's hosted runners, " +
+			"BuildPulse runners are drop-in runners for GitHub Actions, CircleCI and Semaphore, " +
 			"with Test Intelligence (flaky-test detection, coverage and CI metrics) included with every minute. Every organization gets 3,000 free minutes a month, no card required. " +
 			"With a tenant: `status`, `billing_mode` (free: cardless, served from the monthly grant; metered: card on file; exempt: BuildPulse's own) and `activated_at`. " +
 			"Without one: `how_to_start` is a sentence you can relay, and `setup_url` (https://buildpulse.io/organizations/{orgId}/runners/setup) is where activation happens: " +

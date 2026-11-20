@@ -344,7 +344,8 @@ func TestServerInstructionsLeadWithRunners(t *testing.T) {
 // TestModelFacingTextMakesNoComparativeClaims guards what plugin directories
 // scan. OpenAI's submission scan rejected the server instructions and the
 // get_runner_status description for comparing the plugin with alternatives
-// ("about 2x faster at half the cost of the provider's hosted runners").
+// ("about 2x faster at half the cost of the provider's hosted runners"), and
+// then get_runner_usage for describing its GitHub list-price comparison.
 // Everything an agent reads at initialize or tools/list must describe what
 // the tools do, not rank BuildPulse against other products.
 func TestModelFacingTextMakesNoComparativeClaims(t *testing.T) {
@@ -361,7 +362,7 @@ func TestModelFacingTextMakesNoComparativeClaims(t *testing.T) {
 	for _, tool := range tools.Tools {
 		texts["tool "+tool.Name] = tool.Title + " " + tool.Description
 	}
-	banned := regexp.MustCompile(`(?i)\bfaster\b|\bcheaper\b|\bhalf the cost\b|\b2x (as )?fast|\btwice as fast\b|\bbetter than\b|\bhosted runners\b`)
+	banned := regexp.MustCompile(`(?i)\bfaster\b|\bcheaper\b|\bhalf the cost\b|\b2x (as )?fast|\btwice as fast\b|\bbetter than\b|\bhosted (larger-)?runners?\b|\bsav(e|ed|es|ing|ings)\b|\bspeed-?up\b|github'?s? (hosted|list)|github_list_price|savings_percent`)
 	for where, text := range texts {
 		if m := banned.FindString(text); m != "" {
 			t.Errorf("%s contains the comparative claim %q", where, m)

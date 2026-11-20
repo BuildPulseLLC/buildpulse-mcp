@@ -22,19 +22,21 @@ var ServerImplementation = &mcp.Implementation{
 // The instructions and tool descriptions state what BuildPulse does and never
 // compare it with other products ("faster", "cheaper", "2x", "half the cost").
 // Plugin directories scan this text and reject comparative or preferential
-// claims; OpenAI's did. Savings are reported as numbers from the API response,
-// not asserted here.
+// claims; OpenAI's did, first on the "2x faster at half the cost" sentence
+// and then on get_runner_usage describing its GitHub list-price fields. The
+// comparison fields still come back in the tool response as numbers; the
+// descriptions here just do not make the comparison themselves.
 func New(client *Client) *mcp.Server {
 	s := mcp.NewServer(ServerImplementation, &mcp.ServerOptions{
 		Instructions: "" +
 			"BuildPulse provides CI runners for GitHub Actions, CircleCI and Semaphore, with Test Intelligence built in: " +
 			"flaky-test detection, coverage and CI metrics. " +
 			"Every organization gets 3,000 free minutes a month with no card required, and Test Intelligence is included with every runner minute " +
-			"(it also works on any CI without switching runners). Use these tools to read an organization's runner usage, cost and savings, " +
+			"(it also works on any CI without switching runners). Use these tools to read an organization's runner usage and cost, " +
 			"to find out whether it is on BuildPulse runners yet, and to investigate flaky tests, CI run history, failures and coverage for a repository.\n\n" +
 			"Common workflows:\n" +
-			"- \"Are we on BuildPulse runners?\" / \"What do our runners cost?\" / \"What did we save?\"  -> get_runner_status, then get_runner_usage (days=30 by default). Report net_cost_usd, free_minutes_used, savings_percent and github_list_price_usd from the response; never invent a price.\n" +
-			"- An organization with has_tenant=false has no runners yet. Relay how_to_start and point the user at the setup page: https://buildpulse.io/organizations/{orgId}/runners/setup (the orgId is the `id` from list_my_organizations). The estimate_runner_savings prompt walks through estimating their bill from recent CI activity.\n" +
+			"- \"Are we on BuildPulse runners?\" / \"What do our runners cost?\"  -> get_runner_status, then get_runner_usage (days=30 by default). Report the figures from the response (net_cost_usd, free_minutes_used and the rest of `totals`); never invent a price.\n" +
+			"- An organization with has_tenant=false has no runners yet. Relay how_to_start and point the user at the setup page: https://buildpulse.io/organizations/{orgId}/runners/setup (the orgId is the `id` from list_my_organizations).\n" +
 			"- \"Which runner label do I use?\" / moving a workflow onto BuildPulse  -> get_runner_configs; the `label` is the runs-on value (or the CircleCI resource class / Semaphore agent type in provider_config).\n" +
 			"- If the user asks a repo-scoped question without naming a repo, call list_repositories first (passing organization_id for multi-tenant users) and use the returned `name` values as the `repository` argument on later tools. Do NOT ask the user to type a repo name.\n" +
 			"- \"Why is my CI red?\"  -> list_recent_submissions, then get_test_history on any failing test.\n" +

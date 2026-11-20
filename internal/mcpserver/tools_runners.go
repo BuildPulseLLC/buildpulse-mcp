@@ -13,7 +13,7 @@ import (
 // endpoints. BuildPulse runners are the primary product (3,000 free minutes
 // a month, Test Intelligence included on every minute), so an
 // agent must be able to learn whether an organization is on them and read
-// what they cost and saved. All three are organization-scoped: no repository
+// what they cost. All three are organization-scoped: no repository
 // argument. Prices and the free-minute grant come back in the API's
 // `pricing` block; nothing here hardcodes a rate.
 
@@ -43,17 +43,17 @@ func registerRunnerTools(s *mcp.Server, c *Client) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:  "get_runner_usage",
-		Title: "Get runner usage, cost and savings",
+		Title: "Get runner usage and cost",
 		Description: "Return what the organization's BuildPulse runners did over the last `days` days (1-90, default 30): jobs, billable minutes, cost before free minutes, free minutes used and their value, net cost, " +
-			"p50 and p90 job duration in seconds, p50 queue wait (only when jobs measured it), and the same minutes priced at GitHub's hosted larger-runner list rate with `savings_percent`. " +
+			"p50 and p90 job duration in seconds and p50 queue wait (only when jobs measured it). " +
 			"Given as `totals` and as a `breakdown` per runner size, architecture and CI provider (highest cost first). " +
-			"`pricing` carries the published offer and the full rate card (BuildPulse and GitHub list price per size, free minutes per month, speedup), and is returned even when the organization has no runners, so use it for any estimate instead of remembering prices. " +
+			"`pricing` carries the rate card (list price per runner size) and the free minutes per month, and is returned even when the organization has no runners, so use it for any estimate instead of remembering prices. " +
 			"Zeroed totals with an empty breakdown means nothing ran on BuildPulse runners in the window; check get_runner_status for whether runners are activated at all. For users in multiple organizations, pass `organization_id`.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:    true,
 			OpenWorldHint:   closedWorld(),
 			DestructiveHint: nonDestructive(),
-			Title:           "Get runner usage, cost and savings",
+			Title:           "Get runner usage and cost",
 		},
 	}, guarded(c, "get_runner_usage", getRunnerUsage(c)))
 
@@ -143,8 +143,8 @@ type runnerUsageFigures struct {
 	FreeMinutesUsed     float64  `json:"free_minutes_used"`
 	FreeMinutesValueUsd float64  `json:"free_minutes_value_usd"`
 	NetCostUsd          float64  `json:"net_cost_usd" jsonschema:"cost_usd minus free_minutes_value_usd: what the invoice charges before credits"`
-	GithubListPriceUsd  *float64 `json:"github_list_price_usd,omitempty" jsonschema:"the same billable minutes at GitHub's hosted larger-runner list price; absent when no minute was on a priced size"`
-	SavingsPercent      *int     `json:"savings_percent,omitempty" jsonschema:"100 x (1 - BuildPulse list cost / github_list_price_usd); absent with github_list_price_usd"`
+	GithubListPriceUsd  *float64 `json:"github_list_price_usd,omitempty" jsonschema:"reference figure: the same billable minutes at the published GitHub list price for the matching runner size; absent when no minute was on a priced size"`
+	SavingsPercent      *int     `json:"savings_percent,omitempty" jsonschema:"100 x (1 - cost_usd / github_list_price_usd); absent with github_list_price_usd"`
 	P50DurationSeconds  *int     `json:"p50_duration_seconds,omitempty"`
 	P90DurationSeconds  *int     `json:"p90_duration_seconds,omitempty"`
 	P50QueueSeconds     *int     `json:"p50_queue_seconds,omitempty" jsonschema:"median queued-to-running wait; absent when no job in the window measured it"`

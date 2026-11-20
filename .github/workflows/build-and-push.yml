@@ -41,6 +41,10 @@ env:
   TF_VAR_backend_bucket: ${{ vars.BACKEND_BUCKET }}
   TF_VAR_environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
   TF_VAR_version_tag: ${{ github.sha }}
+  # OpenAI plugin domain-ownership token (see .infra/variables.tf). Set as a
+  # GitHub environment variable only while a submission needs it; unset means
+  # empty, which leaves /.well-known/openai-apps-challenge unrouted.
+  TF_VAR_openai_apps_challenge: ${{ vars.OPENAI_APPS_CHALLENGE }}
 
 jobs:
   build-and-push:

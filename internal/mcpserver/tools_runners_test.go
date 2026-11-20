@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -327,7 +328,7 @@ func TestServerInstructionsLeadWithRunners(t *testing.T) {
 	platform, _ := fakeRunnerPlatform(t, true)
 	cs := newTestServerSession(t, platform)
 	instr := cs.InitializeResult().Instructions
-	if !strings.HasPrefix(instr, "BuildPulse provides faster, cheaper CI runners") {
+	if !strings.HasPrefix(instr, "BuildPulse provides CI runners") {
 		t.Errorf("instructions must lead with runners, got: %.120s", instr)
 	}
 	for _, want := range []string{"Test Intelligence", "3,000 free minutes", "https://buildpulse.io/organizations/{orgId}/runners/setup", "get_runner_status", "get_runner_usage", "get_runner_configs", "plan_required", "find_flaky_tests", "list_repositories"} {
@@ -337,5 +338,33 @@ func TestServerInstructionsLeadWithRunners(t *testing.T) {
 	}
 	if strings.ContainsAny(instr, "—―") {
 		t.Error("instructions contain an em-dash")
+	}
+}
+
+// TestModelFacingTextMakesNoComparativeClaims guards what plugin directories
+// scan. OpenAI's submission scan rejected the server instructions and the
+// get_runner_status description for comparing the plugin with alternatives
+// ("about 2x faster at half the cost of the provider's hosted runners").
+// Everything an agent reads at initialize or tools/list must describe what
+// the tools do, not rank BuildPulse against other products.
+func TestModelFacingTextMakesNoComparativeClaims(t *testing.T) {
+	platform, _ := fakeRunnerPlatform(t, true)
+	cs := newTestServerSession(t, platform)
+	texts := map[string]string{"instructions": cs.InitializeResult().Instructions}
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(tools.Tools) == 0 {
+		t.Fatal("no tools listed; the scan would be vacuous")
+	}
+	for _, tool := range tools.Tools {
+		texts["tool "+tool.Name] = tool.Title + " " + tool.Description
+	}
+	banned := regexp.MustCompile(`(?i)\bfaster\b|\bcheaper\b|\bhalf the cost\b|\b2x (as )?fast|\btwice as fast\b|\bbetter than\b|\bhosted runners\b`)
+	for where, text := range texts {
+		if m := banned.FindString(text); m != "" {
+			t.Errorf("%s contains the comparative claim %q", where, m)
+		}
 	}
 }

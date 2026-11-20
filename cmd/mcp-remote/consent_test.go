@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -145,10 +147,7 @@ func TestConsentApproveIssuesCodeToClient(t *testing.T) {
 	key := consentKeyFrom(t, callbackFor(s, state).Body.String())
 
 	w := postConsent(s, key, "approve")
-	if w.Code != http.StatusFound {
-		t.Fatalf("approve status = %d, want 302; body = %s", w.Code, w.Body.String())
-	}
-	loc, _ := url.Parse(w.Header().Get("Location"))
+	loc := handOffDest(t, w)
 	code := loc.Query().Get("code")
 	if code == "" {
 		t.Fatal("approve must deliver an authorization code")
@@ -167,10 +166,7 @@ func TestConsentDenyIssuesNoCode(t *testing.T) {
 	key := consentKeyFrom(t, callbackFor(s, state).Body.String())
 
 	w := postConsent(s, key, "deny")
-	if w.Code != http.StatusFound {
-		t.Fatalf("deny status = %d, want 302", w.Code)
-	}
-	loc, _ := url.Parse(w.Header().Get("Location"))
+	loc := handOffDest(t, w)
 	if loc.Query().Get("code") != "" {
 		t.Error("deny must not deliver an authorization code")
 	}
@@ -185,12 +181,10 @@ func TestConsentKeyIsSingleUse(t *testing.T) {
 	s, _, state := attackerSetup(t)
 	key := consentKeyFrom(t, callbackFor(s, state).Body.String())
 
-	if w := postConsent(s, key, "approve"); w.Code != http.StatusFound {
-		t.Fatalf("first approve status = %d, want 302", w.Code)
-	}
+	handOffDest(t, postConsent(s, key, "approve"))
 	w := postConsent(s, key, "approve")
-	if w.Code == http.StatusFound {
-		t.Fatal("replayed consent_key must not mint a second code")
+	if w.Code != http.StatusBadRequest || w.Header().Get("Location") != "" || strings.Contains(w.Body.String(), "code=") {
+		t.Fatalf("replayed consent_key must not mint a second code; status = %d", w.Code)
 	}
 }
 
@@ -483,5 +477,70 @@ func TestConsentCSPOmitsFormActionWhenUnparseable(t *testing.T) {
 	}
 	if !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Error("frame-ancestors must still be present")
+	}
+}
+
+// handOffDest returns where a consent decision sent the browser, whichever
+// way it was sent: the Location of a 302, or the link on the hand-off page.
+func handOffDest(t *testing.T, w *httptest.ResponseRecorder) *url.URL {
+	t.Helper()
+	raw := w.Header().Get("Location")
+	if w.Code == http.StatusOK {
+		m := regexp.MustCompile(`id="continue" href="([^"]+)"`).FindStringSubmatch(w.Body.String())
+		if m == nil {
+			t.Fatalf("hand-off page has no continue link; body = %s", w.Body.String())
+		}
+		raw = html.UnescapeString(m[1])
+	} else if w.Code != http.StatusFound {
+		t.Fatalf("consent decision status = %d, want a 302 or the 200 hand-off page; body = %s", w.Code, w.Body.String())
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" && u.Scheme == "" {
+		t.Fatalf("hand-off destination %q does not parse", raw)
+	}
+	return u
+}
+
+// The property: a web client must never be handed its code by a redirect
+// that follows the consent form POST. Browsers apply the consent page's
+// form-action to every hop after a form submission, so a client that forwards
+// its callback to a second origin (the OpenAI plugin portal does) had that
+// hop blocked silently: approved, code issued, never redeemed. Put the 302
+// back for https destinations and this fails on the status and the Location.
+func TestWebClientIsHandedOffWithoutARedirect(t *testing.T) {
+	s, _, state := attackerSetup(t) // registers an https redirect URI
+	key := consentKeyFrom(t, callbackFor(s, state).Body.String())
+
+	w := postConsent(s, key, "approve")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (hand-off page, not a redirect)", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Fatalf("web client was redirected to %q; a redirect after the form POST is subject to form-action on every hop", loc)
+	}
+	body := w.Body.String()
+	dest := handOffDest(t, w)
+	if dest.Host != "attacker.example.com" || dest.Query().Get("code") == "" || dest.Query().Get("state") != "client-state" {
+		t.Errorf("hand-off destination = %s, want the registered redirect URI with code and state", dest)
+	}
+	if !strings.Contains(body, `http-equiv="refresh"`) {
+		t.Error("hand-off page must navigate by meta refresh (no script is allowed on it)")
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); strings.Contains(csp, "form-action") || !strings.Contains(csp, "default-src 'none'") {
+		t.Errorf("hand-off CSP = %q, want default-src 'none' and no form-action", csp)
+	}
+	if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
+	}
+}
+
+// Local MCP clients (loopback http, private-use schemes) keep the plain 302.
+func TestLocalClientsStillGetARedirect(t *testing.T) {
+	for _, dest := range []string{"http://127.0.0.1:53211/callback?code=abc&state=s", "cursor://anysphere.cursor-mcp/oauth/callback?code=abc&state=s"} {
+		w := httptest.NewRecorder()
+		handOffToClient(w, httptest.NewRequest(http.MethodPost, "/oauth/consent", nil), dest)
+		if w.Code != http.StatusFound || w.Header().Get("Location") != dest {
+			t.Errorf("handOffToClient(%q): status = %d, Location = %q; want a 302 to the destination", dest, w.Code, w.Header().Get("Location"))
+		}
 	}
 }

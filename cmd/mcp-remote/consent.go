@@ -325,11 +325,11 @@ func (s *oauthServer) consent(w http.ResponseWriter, r *http.Request) {
 
 	if r.PostFormValue("action") != "approve" {
 		log.Printf("consent: denied by user sub=%s client=%s", pending.UserSubject, pending.ClientID)
-		http.Redirect(w, r, appendQuery(pending.RedirectURI, url.Values{
+		handOffToClient(w, r, appendQuery(pending.RedirectURI, url.Values{
 			"error":             {"access_denied"},
 			"error_description": {"the user denied the authorization request"},
 			"state":             {pending.OriginalState},
-		}), http.StatusFound)
+		}))
 		return
 	}
 
@@ -351,11 +351,70 @@ func (s *oauthServer) consent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("consent: approved sub=%s client=%s (%s)", pending.UserSubject, pending.ClientID, pending.ClientName)
-	http.Redirect(w, r, appendQuery(pending.RedirectURI, url.Values{
+	handOffToClient(w, r, appendQuery(pending.RedirectURI, url.Values{
 		"code":  {code},
 		"state": {pending.OriginalState},
-	}), http.StatusFound)
+	}))
 }
+
+// handOffToClient sends the browser to the client's redirect URI with the
+// decision attached.
+//
+// For a web client (an https redirect URI) it does NOT answer the consent
+// POST with a 302. Browsers enforce the consent page's form-action on every
+// hop of the redirect chain that follows a form submission, not only the
+// first. consentCSP allows the client's own redirect origin, but a web client
+// is free to forward its callback to another origin of its own, and that
+// second hop is blocked with no error page: the user clicks "Allow access"
+// and the tab simply stays put, with the code issued and never redeemed.
+// The OpenAI plugin portal does this (its callback is registered on
+// chatgpt.com). We cannot list every origin a client may forward to, so the
+// POST ends in a 200 page that navigates by meta refresh instead. That is a
+// new navigation, not part of the form submission, so form-action no longer
+// applies to anything downstream of it.
+//
+// Loopback http and private-use scheme redirects (every local MCP client)
+// keep the plain 302: they end at the first hop, which form-action already
+// allows, and a meta refresh to a custom scheme is not reliable everywhere.
+func handOffToClient(w http.ResponseWriter, r *http.Request, dest string) {
+	u, err := url.Parse(dest)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") {
+		http.Redirect(w, r, dest, http.StatusFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'; default-src 'none'; style-src 'unsafe-inline'")
+	w.WriteHeader(http.StatusOK)
+	if err := handOffPage.Execute(w, struct{ Dest string }{dest}); err != nil {
+		log.Printf("consent: render hand-off page failed: %v", err)
+	}
+}
+
+// handOffPage carries no script (default-src 'none' forbids it): the meta
+// refresh does the navigation and the link is the fallback.
+var handOffPage = template.Must(template.New("handoff").Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="refresh" content="0;url={{.Dest}}">
+<title>Returning to the application · BuildPulse</title>
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#0f1115; color:#e6e8ee; }
+  .card { max-width:420px; padding:28px; border:1px solid #262a33; border-radius:10px; background:#171a21; }
+  h1 { font-size:18px; margin:0 0 8px; }
+  p { color:#9aa2b1; margin:0; }
+  a { color:#7aa2ff; }
+</style>
+</head>
+<body><div class="card"><h1>Returning to the application</h1>
+<p>If nothing happens, <a id="continue" href="{{.Dest}}" rel="noreferrer">continue</a>.</p></div></body>
+</html>`))
 
 // stashConsent persists the post-authentication state that the consent POST
 // needs, and returns the single-use key that ties the rendered form to it.

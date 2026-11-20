@@ -27,7 +27,7 @@ func registerRunnerTools(s *mcp.Server, c *Client) {
 		Name:  "get_runner_status",
 		Title: "Get BuildPulse runner status",
 		Description: "Report whether the organization has activated BuildPulse CI runners, and how to start if it has not. " +
-			"BuildPulse runners are drop-in runners for GitHub Actions, CircleCI and Semaphore that finish jobs twice as fast at half the cost, " +
+			"BuildPulse runners are drop-in runners for GitHub Actions, CircleCI and Semaphore, " +
 			"with Test Intelligence (flaky-test detection, coverage and CI metrics) included with every minute. Every organization gets 3,000 free minutes a month, no card required. " +
 			"With a tenant: `status`, `billing_mode` (free: cardless, served from the monthly grant; metered: card on file; exempt: BuildPulse's own) and `activated_at`. " +
 			"Without one: `how_to_start` is a sentence you can relay, and `setup_url` (https://buildpulse.io/organizations/{orgId}/runners/setup) is where activation happens: " +

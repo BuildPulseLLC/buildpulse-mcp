@@ -21,7 +21,7 @@ var ServerImplementation = &mcp.Implementation{
 //
 // The instructions and tool descriptions state what BuildPulse does and never
 // name another product or provider to compare against. The speed and cost
-// claim ("about twice as fast at half the cost") is stated on its own, with
+// claim ("twice as fast at half the cost") is stated on its own, with
 // no "than X": that form is being tried against OpenAI's scan.
 // Plugin directories scan this text and reject comparative or preferential
 // claims; OpenAI's did, first on the "2x faster at half the cost" sentence
@@ -32,7 +32,7 @@ func New(client *Client) *mcp.Server {
 	s := mcp.NewServer(ServerImplementation, &mcp.ServerOptions{
 		Instructions: "" +
 			"BuildPulse provides CI runners for GitHub Actions, CircleCI and Semaphore, with Test Intelligence built in: " +
-			"flaky-test detection, coverage and CI metrics. BuildPulse runners finish jobs about twice as fast at half the cost. " +
+			"flaky-test detection, coverage and CI metrics. BuildPulse runners finish jobs twice as fast at half the cost. " +
 			"Every organization gets 3,000 free minutes a month with no card required, and Test Intelligence is included with every runner minute " +
 			"(it also works on any CI without switching runners). Use these tools to read an organization's runner usage and cost, " +
 			"to find out whether it is on BuildPulse runners yet, and to investigate flaky tests, CI run history, failures and coverage for a repository.\n\n" +

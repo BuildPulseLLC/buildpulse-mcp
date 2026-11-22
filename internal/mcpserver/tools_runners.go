@@ -143,8 +143,10 @@ type runnerUsageFigures struct {
 	FreeMinutesUsed     float64  `json:"free_minutes_used"`
 	FreeMinutesValueUsd float64  `json:"free_minutes_value_usd"`
 	NetCostUsd          float64  `json:"net_cost_usd" jsonschema:"cost_usd minus free_minutes_value_usd: what the invoice charges before credits"`
-	GithubListPriceUsd  *float64 `json:"github_list_price_usd,omitempty" jsonschema:"reference figure: the same billable minutes at the published GitHub list price for the matching runner size; absent when no minute was on a priced size"`
-	SavingsPercent      *int     `json:"savings_percent,omitempty" jsonschema:"100 x (1 - cost_usd / github_list_price_usd); absent with github_list_price_usd"`
+	GithubListPriceUsd  *float64 `json:"github_list_price_usd,omitempty" jsonschema:"reference figure: the GitHub Actions minutes at the published GitHub list price for the matching runner size; absent when no GitHub Actions minute was on a priced size"`
+	HostedListPriceUsd  *float64 `json:"hosted_list_price_usd,omitempty" jsonschema:"reference figure: the same billable minutes on the CI provider's own machine with the same vCPU count (GitHub larger runner, CircleCI Linux VM resource class or Semaphore f1 machine type) at that provider's list price, minute for minute; absent when no minute had a matching machine"`
+	ProviderFeeUsd      *float64 `json:"provider_fee_usd,omitempty" jsonschema:"the per-minute fee the CI provider still charges on these minutes (Semaphore self-hosted agents); absent when zero"`
+	SavingsPercent      *int     `json:"savings_percent,omitempty" jsonschema:"100 x (1 - (list cost + provider_fee_usd) / hosted_list_price_usd) over the compared minutes; absent with hosted_list_price_usd"`
 	P50DurationSeconds  *int     `json:"p50_duration_seconds,omitempty"`
 	P90DurationSeconds  *int     `json:"p90_duration_seconds,omitempty"`
 	P50QueueSeconds     *int     `json:"p50_queue_seconds,omitempty" jsonschema:"median queued-to-running wait; absent when no job in the window measured it"`
@@ -156,6 +158,7 @@ type runnerUsageGroup struct {
 	RunnerType          string   `json:"runner_type"`
 	Arch                string   `json:"arch"`
 	CiProviderType      string   `json:"ci_provider_type"`
+	ComparedWith        string   `json:"compared_with,omitempty" jsonschema:"the CI provider's machine hosted_list_price_usd is for, e.g. CircleCI X-large"`
 	Jobs                int64    `json:"jobs"`
 	BillableMinutes     float64  `json:"billable_minutes"`
 	CostUsd             float64  `json:"cost_usd"`
@@ -163,6 +166,8 @@ type runnerUsageGroup struct {
 	FreeMinutesValueUsd float64  `json:"free_minutes_value_usd"`
 	NetCostUsd          float64  `json:"net_cost_usd"`
 	GithubListPriceUsd  *float64 `json:"github_list_price_usd,omitempty"`
+	HostedListPriceUsd  *float64 `json:"hosted_list_price_usd,omitempty"`
+	ProviderFeeUsd      *float64 `json:"provider_fee_usd,omitempty"`
 	SavingsPercent      *int     `json:"savings_percent,omitempty"`
 	P50DurationSeconds  *int     `json:"p50_duration_seconds,omitempty"`
 	P90DurationSeconds  *int     `json:"p90_duration_seconds,omitempty"`
@@ -178,12 +183,27 @@ type rateCardRate struct {
 	GithubUsdPerMinute     float64 `json:"github_usd_per_minute"`
 }
 
+// vendorRate is one CircleCI or Semaphore machine next to the BuildPulse size
+// with the same vCPU count, for estimates on orgs that run those CIs.
+type vendorRate struct {
+	CiProviderType              string  `json:"ci_provider_type"`
+	VendorClass                 string  `json:"vendor_class"`
+	VCPU                        int     `json:"vcpu"`
+	VendorUsdPerMinute          float64 `json:"vendor_usd_per_minute"`
+	RunnerType                  string  `json:"runner_type"`
+	BuildpulseUsdPerMinute      float64 `json:"buildpulse_usd_per_minute"`
+	ProviderFeeUsdPerMinute     float64 `json:"provider_fee_usd_per_minute" jsonschema:"fee the CI provider charges per minute on a BuildPulse machine (Semaphore self-hosted agents)"`
+	BuildpulseAllInUsdPerMinute float64 `json:"buildpulse_all_in_usd_per_minute" jsonschema:"buildpulse_usd_per_minute plus provider_fee_usd_per_minute"`
+}
+
+// runnerPricing deliberately leaves out platform-api's speedupVsHosted: the
+// estimate is priced minute for minute, with no speed factor.
 type runnerPricing struct {
 	FreeMinutesPerMonth  int            `json:"free_minutes_per_month"`
 	BaseRateUsdPerMinute float64        `json:"base_rate_usd_per_minute"`
 	BaseRunner           string         `json:"base_runner"`
-	SpeedupVsHosted      int            `json:"speedup_vs_hosted"`
 	RateCard             []rateCardRate `json:"rate_card"`
+	VendorRateCard       []vendorRate   `json:"vendor_rate_card"`
 	PricingURL           string         `json:"pricing_url"`
 }
 
@@ -206,6 +226,8 @@ type platformUsageFigures struct {
 	FreeMinutesValueUsd float64  `json:"freeMinutesValueUsd"`
 	NetCostUsd          float64  `json:"netCostUsd"`
 	GithubListPriceUsd  *float64 `json:"githubListPriceUsd"`
+	HostedListPriceUsd  *float64 `json:"hostedListPriceUsd"`
+	ProviderFeeUsd      *float64 `json:"providerFeeUsd"`
 	SavingsPercent      *int     `json:"savingsPercent"`
 	P50DurationSeconds  *int     `json:"p50DurationSeconds"`
 	P90DurationSeconds  *int     `json:"p90DurationSeconds"`
@@ -221,6 +243,8 @@ func (p platformUsageFigures) out() runnerUsageFigures {
 		FreeMinutesValueUsd: p.FreeMinutesValueUsd,
 		NetCostUsd:          p.NetCostUsd,
 		GithubListPriceUsd:  p.GithubListPriceUsd,
+		HostedListPriceUsd:  p.HostedListPriceUsd,
+		ProviderFeeUsd:      p.ProviderFeeUsd,
 		SavingsPercent:      p.SavingsPercent,
 		P50DurationSeconds:  p.P50DurationSeconds,
 		P90DurationSeconds:  p.P90DurationSeconds,
@@ -237,13 +261,13 @@ type platformRunnerUsage struct {
 		RunnerType     string `json:"runnerType"`
 		Arch           string `json:"arch"`
 		CiProviderType string `json:"ciProviderType"`
+		ComparedWith   string `json:"comparedWith"`
 		platformUsageFigures
 	} `json:"breakdown"`
 	Pricing struct {
 		FreeMinutesPerMonth  int     `json:"freeMinutesPerMonth"`
 		BaseRateUsdPerMinute float64 `json:"baseRateUsdPerMinute"`
 		BaseRunner           string  `json:"baseRunner"`
-		SpeedupVsHosted      int     `json:"speedupVsHosted"`
 		RateCard             []struct {
 			RunnerType             string  `json:"runnerType"`
 			Arch                   string  `json:"arch"`
@@ -252,6 +276,16 @@ type platformRunnerUsage struct {
 			BuildpulseUsdPerMinute float64 `json:"buildpulseUsdPerMinute"`
 			GithubUsdPerMinute     float64 `json:"githubUsdPerMinute"`
 		} `json:"rateCard"`
+		VendorRateCard []struct {
+			CiProviderType              string  `json:"ciProviderType"`
+			VendorClass                 string  `json:"vendorClass"`
+			VCPU                        int     `json:"vcpu"`
+			VendorUsdPerMinute          float64 `json:"vendorUsdPerMinute"`
+			RunnerType                  string  `json:"runnerType"`
+			BuildpulseUsdPerMinute      float64 `json:"buildpulseUsdPerMinute"`
+			ProviderFeeUsdPerMinute     float64 `json:"providerFeeUsdPerMinute"`
+			BuildpulseAllInUsdPerMinute float64 `json:"buildpulseAllInUsdPerMinute"`
+		} `json:"vendorRateCard"`
 		PricingURL string `json:"pricingUrl"`
 	} `json:"pricing"`
 	WebURL string `json:"web_url"`
@@ -305,8 +339,8 @@ func getRunnerUsage(c *Client) mcp.ToolHandlerFor[runnerUsageInput, runnerUsageO
 				FreeMinutesPerMonth:  r.Pricing.FreeMinutesPerMonth,
 				BaseRateUsdPerMinute: r.Pricing.BaseRateUsdPerMinute,
 				BaseRunner:           r.Pricing.BaseRunner,
-				SpeedupVsHosted:      r.Pricing.SpeedupVsHosted,
 				RateCard:             make([]rateCardRate, 0, len(r.Pricing.RateCard)),
+				VendorRateCard:       make([]vendorRate, 0, len(r.Pricing.VendorRateCard)),
 				PricingURL:           r.Pricing.PricingURL,
 			},
 			WebURL: r.WebURL,
@@ -317,6 +351,7 @@ func getRunnerUsage(c *Client) mcp.ToolHandlerFor[runnerUsageInput, runnerUsageO
 				RunnerType:          g.RunnerType,
 				Arch:                g.Arch,
 				CiProviderType:      g.CiProviderType,
+				ComparedWith:        g.ComparedWith,
 				Jobs:                f.Jobs,
 				BillableMinutes:     f.BillableMinutes,
 				CostUsd:             f.CostUsd,
@@ -324,6 +359,8 @@ func getRunnerUsage(c *Client) mcp.ToolHandlerFor[runnerUsageInput, runnerUsageO
 				FreeMinutesValueUsd: f.FreeMinutesValueUsd,
 				NetCostUsd:          f.NetCostUsd,
 				GithubListPriceUsd:  f.GithubListPriceUsd,
+				HostedListPriceUsd:  f.HostedListPriceUsd,
+				ProviderFeeUsd:      f.ProviderFeeUsd,
 				SavingsPercent:      f.SavingsPercent,
 				P50DurationSeconds:  f.P50DurationSeconds,
 				P90DurationSeconds:  f.P90DurationSeconds,
@@ -339,6 +376,9 @@ func getRunnerUsage(c *Client) mcp.ToolHandlerFor[runnerUsageInput, runnerUsageO
 				BuildpulseUsdPerMinute: rc.BuildpulseUsdPerMinute,
 				GithubUsdPerMinute:     rc.GithubUsdPerMinute,
 			})
+		}
+		for _, v := range r.Pricing.VendorRateCard {
+			out.Pricing.VendorRateCard = append(out.Pricing.VendorRateCard, vendorRate(v))
 		}
 		return nil, out, nil
 	}

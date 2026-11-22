@@ -4,7 +4,9 @@ All notable changes to the BuildPulse MCP server. Versions are the
 `mcp-vX.Y.Z` git tags; the npm package `@buildpulse/mcp` and the MCP
 Registry entry carry the same number.
 
-## Unreleased (`main` since `mcp-v0.2.0`)
+## Unreleased (`main` since `mcp-v0.2.1`)
+
+## mcp-v0.2.1 (2026-11-22)
 
 - `get_runner_usage` compares each job against its own CI provider's
   machine of the same vCPU count: GitHub larger runner, CircleCI Linux VM
@@ -18,7 +20,12 @@ Registry entry carry the same number.
 - `estimate_runner_savings` prices the same minutes on both sides, with no
   speed-up divisor, and uses the CircleCI/Semaphore rate card for orgs on
   those CIs. Needs platform-api#141.
-
+- Server instructions and tool titles and descriptions describe what the
+  tools do without comparing BuildPulse to other products (a test rejects
+  that wording). The comparison figures still come back in tool results.
+- OAuth: for https redirect URIs the consent POST ends in a 200 page that
+  navigates by meta refresh, so a web client that forwards its callback to
+  a second origin is no longer blocked by the consent page's form-action.
 - Plan-gate (402 `plan_limit_exceeded`, 403 `plan_required`) and rate-limit
   outcomes are now IsError results carrying only the explanation. They used
   to be success results with a zero-valued `structuredContent`, which

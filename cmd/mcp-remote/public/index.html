@@ -128,7 +128,7 @@
 <h2>Tools</h2>
 <ul class="tools">
   <li><code>get_runner_status</code>: whether the organization has activated BuildPulse runners, its billing mode, and when it has not, how to start (3,000 free minutes a month) with the setup URL.</li>
-  <li><code>get_runner_usage</code>: runner jobs, minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at GitHub list price with the savings percentage, per size and provider (1 to 90 days, default 30).</li>
+  <li><code>get_runner_usage</code>: runner jobs, minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at each CI provider's own list price (GitHub larger runner, CircleCI resource class, Semaphore machine type, minute for minute) with the savings percentage, per size and provider (1 to 90 days, default 30).</li>
   <li><code>get_runner_configs</code>: the runner sizes and <code>runs-on</code> labels the organization has configured.</li>
   <li><code>list_my_organizations</code> — every organization the token can access; returns the <code>id</code> to pass as <code>organization_id</code>.</li>
   <li><code>list_repositories</code> — repositories BuildPulse monitors for an organization.</li>

@@ -9,7 +9,7 @@ Model Context Protocol server for [BuildPulse](https://buildpulse.io):
 faster, cheaper CI runners for GitHub Actions, CircleCI and Semaphore
 (about 2x faster at half the cost, 3,000 free minutes a month) with Test
 Intelligence built in. Twelve read-only tools: runner usage, cost and
-savings versus GitHub list price, configured runner labels, and whether
+savings versus each CI provider's own list price, configured runner labels, and whether
 your organization is on BuildPulse runners yet, plus flaky tests, recent
 CI failures, per-run test results, flakiness % and code-coverage % for
 your repositories. Works from Claude, ChatGPT, Cursor, VS Code, Windsurf,
@@ -161,7 +161,7 @@ instead by adding `"headers": { "Authorization": "Bearer bp_..." }`.
 | Tool | What it returns |
 |------|-----------------|
 | `get_runner_status` | Whether the organization has activated BuildPulse runners, its billing mode, and when it has not, `how_to_start` (3,000 free minutes a month) with the setup URL. |
-| `get_runner_usage` | Runner jobs, billable minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at GitHub list price with `savings_percent`, per size and provider (`days` 1-90, default 30). The `pricing` block carries the rate card. |
+| `get_runner_usage` | Runner jobs, billable minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at each CI provider's own list price (GitHub larger runner, CircleCI resource class, Semaphore machine type, minute for minute) with `hosted_list_price_usd` and `savings_percent`, per size and provider (`days` 1-90, default 30). The `pricing` block carries `rate_card` (GitHub Actions) and `vendor_rate_card` (CircleCI, Semaphore). |
 | `get_runner_configs` | The runner sizes and `runs-on` labels (or CircleCI resource class / Semaphore agent type) the organization has configured. |
 | `list_my_organizations` | Every organization the token can access, with the `id` UUID to pass as `organization_id`. |
 | `list_repositories` | Repositories BuildPulse is monitoring for an organization. |
@@ -203,7 +203,7 @@ call: `buildpulse://repos/{repo}/flaky-tests` and
 ## Try asking
 
 - "Are we on BuildPulse runners yet? What would they save us?"
-- "What did our runners cost last month, and how does that compare to GitHub list price?"
+- "What did our runners cost last month, and how does that compare to our CI provider's own list price?"
 - "Why is CI red on `web-client`? Show me the failing tests from the last run."
 - "Which tests in `platform-api` have been flakiest this week, and where do they fail?"
 - "How well tested is `agents`? Give me flakiness and coverage."

@@ -52,7 +52,7 @@ when you need one.
 ## Try asking
 
 - "Are we on BuildPulse runners yet? What would they save us?"
-- "What did our runners cost last month, and how does that compare to GitHub list price?"
+- "What did our runners cost last month, and how does that compare to our CI provider's own list price?"
 - "Which BuildPulse runner labels can I use in this workflow?"
 - "Why is CI red on `web-client`? Show me the failing tests from the last run."
 - "Which tests in `platform-api` have been flakiest this week, and where do they fail?"
@@ -220,7 +220,7 @@ getting confusingly empty results.
 | Tool | Purpose |
 |------|---------|
 | `get_runner_status` | Whether the organization has activated BuildPulse runners, its billing mode, and when it has not, `how_to_start` (3,000 free minutes a month) with the setup URL. |
-| `get_runner_usage` | Runner jobs, billable minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at GitHub list price with `savings_percent`, per size and provider; `days` 1-90 (default 30). The `pricing` block carries the rate card. |
+| `get_runner_usage` | Runner jobs, billable minutes, cost before and after free minutes, p50/p90 job duration, queue wait, and the same minutes at each CI provider's own list price (GitHub larger runner, CircleCI resource class, Semaphore machine type, minute for minute) with `hosted_list_price_usd` and `savings_percent`, per size and provider; `days` 1-90 (default 30). The `pricing` block carries `rate_card` (GitHub Actions) and `vendor_rate_card` (CircleCI, Semaphore, with Semaphore's self-hosted fee). |
 | `get_runner_configs` | The runner sizes and `runs-on` labels (or CircleCI resource class / Semaphore agent type) the organization has configured. |
 | `list_my_organizations` | Enumerate the organizations this token can access; get the `id` (UUID) to pass as `organization_id`. |
 | `list_repositories` | List repositories in an organization. |
@@ -246,7 +246,7 @@ use in their MCP responses.
 The server also ships five guided prompts (slash-pickable in clients
 that support them):
 
-- `/estimate_runner_savings`: fetches runner status; with no tenant, estimates CI minutes from recent runs and prices them at BuildPulse versus GitHub list rate (every price read from the API's `pricing` block), then points at the setup URL; with a tenant, summarises the last 30 days of usage and savings.
+- `/estimate_runner_savings`: fetches runner status; with no tenant, estimates CI minutes from recent runs and prices them at BuildPulse versus the CI provider's own list rate, minute for minute with no speed factor (every price read from the API's `pricing` block), then points at the setup URL; with a tenant, summarises the last 30 days of usage and savings.
 - `/triage_flaky_tests`
 - `/ci_health_check`
 - `/explain_test_failure`

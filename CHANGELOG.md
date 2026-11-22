@@ -6,6 +6,19 @@ Registry entry carry the same number.
 
 ## Unreleased (`main` since `mcp-v0.2.0`)
 
+- `get_runner_usage` compares each job against its own CI provider's
+  machine of the same vCPU count: GitHub larger runner, CircleCI Linux VM
+  resource class, or Semaphore f1 machine type plus Semaphore's $0.0025/min
+  self-hosted fee. CircleCI and Semaphore jobs used to be priced against
+  GitHub, which understated CircleCI (X-large: 73%, shown as 27%) and
+  overstated Semaphore (f1-standard-2: 13%). New fields:
+  `hosted_list_price_usd`, `provider_fee_usd`, `compared_with` and
+  `pricing.vendor_rate_card`. `github_list_price_usd` now covers GitHub
+  Actions minutes only, and `pricing.speedup_vs_hosted` is gone.
+- `estimate_runner_savings` prices the same minutes on both sides, with no
+  speed-up divisor, and uses the CircleCI/Semaphore rate card for orgs on
+  those CIs. Needs platform-api#141.
+
 - Plan-gate (402 `plan_limit_exceeded`, 403 `plan_required`) and rate-limit
   outcomes are now IsError results carrying only the explanation. They used
   to be success results with a zero-valued `structuredContent`, which

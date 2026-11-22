@@ -34,9 +34,11 @@ func fakeRunnerPlatform(t *testing.T, hasTenant bool) (*httptest.Server, map[str
 		seen["usage"] = r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"from":"2026-10-06T00:00:00Z","to":"2026-11-05T00:00:00Z","days":30,
 		  "totals":{"jobs":1842,"billableMinutes":9120,"costUsd":41.28,"freeMinutesUsed":3000,"freeMinutesValueUsd":12,"netCostUsd":29.28,"githubListPriceUsd":62.4,"savingsPercent":34,"p50DurationSeconds":214,"p90DurationSeconds":1130,"p50QueueSeconds":4},
-		  "breakdown":[{"runnerType":"x86-4x","arch":"x86-64","ciProviderType":"github_actions","jobs":1200,"billableMinutes":4800,"costUsd":38.4,"freeMinutesUsed":1500,"freeMinutesValueUsd":12,"netCostUsd":26.4,"githubListPriceUsd":57.6,"savingsPercent":33,"p50DurationSeconds":240,"p90DurationSeconds":1210},
+		  "breakdown":[{"runnerType":"x86-4x","arch":"x86-64","ciProviderType":"github_actions","jobs":1200,"billableMinutes":4800,"costUsd":38.4,"freeMinutesUsed":1500,"freeMinutesValueUsd":12,"netCostUsd":26.4,"githubListPriceUsd":57.6,"hostedListPriceUsd":57.6,"savingsPercent":33,"comparedWith":"GitHub-hosted x64 4 vCPU","p50DurationSeconds":240,"p90DurationSeconds":1210},
+		               {"runnerType":"x86-2x","arch":"x86-64","ciProviderType":"semaphore_ci","comparedWith":"Semaphore f1-standard-2","jobs":5,"billableMinutes":100,"costUsd":0.4,"freeMinutesUsed":0,"freeMinutesValueUsd":0,"netCostUsd":0.4,"hostedListPriceUsd":0.75,"providerFeeUsd":0.25,"savingsPercent":13},
 		               {"runnerType":"gpu-1x","arch":"x86-64","ciProviderType":"circle_ci","jobs":2,"billableMinutes":10,"costUsd":0.5,"freeMinutesUsed":0,"freeMinutesValueUsd":0,"netCostUsd":0.5}],
-		  "pricing":{"freeMinutesPerMonth":3000,"baseRateUsdPerMinute":0.004,"baseRunner":"x64 2 vCPU","speedupVsHosted":2,"rateCard":[{"runnerType":"x86-2x","arch":"x86-64","vcpu":2,"memoryGi":8,"buildpulseUsdPerMinute":0.004,"githubUsdPerMinute":0.006}],"pricingUrl":"https://buildpulse.io/pricing"},
+		  "pricing":{"freeMinutesPerMonth":3000,"baseRateUsdPerMinute":0.004,"baseRunner":"x64 2 vCPU","speedupVsHosted":2,"rateCard":[{"runnerType":"x86-2x","arch":"x86-64","vcpu":2,"memoryGi":8,"buildpulseUsdPerMinute":0.004,"githubUsdPerMinute":0.006}],
+		    "vendorRateCard":[{"ciProviderType":"semaphore_ci","vendorClass":"Semaphore f1-standard-2","vcpu":2,"vendorUsdPerMinute":0.0075,"runnerType":"x86-2x","buildpulseUsdPerMinute":0.004,"providerFeeUsdPerMinute":0.0025,"buildpulseAllInUsdPerMinute":0.0065}],"pricingUrl":"https://buildpulse.io/pricing"},
 		  "web_url":"https://buildpulse.io/organizations/o/runners/usage"}`))
 	})
 	mux.HandleFunc("/api/v1/runners/configs", func(w http.ResponseWriter, r *http.Request) {
@@ -126,22 +128,34 @@ func TestGetRunnerUsage_DefaultsAndMapping(t *testing.T) {
 	if out.Totals.P50QueueSeconds == nil || *out.Totals.P50QueueSeconds != 4 {
 		t.Errorf("p50_queue_seconds = %v, want 4", out.Totals.P50QueueSeconds)
 	}
-	if len(out.Breakdown) != 2 || out.Breakdown[0].RunnerType != "x86-4x" || out.Breakdown[0].CiProviderType != "github_actions" {
+	if len(out.Breakdown) != 3 || out.Breakdown[0].RunnerType != "x86-4x" || out.Breakdown[0].CiProviderType != "github_actions" {
 		t.Fatalf("breakdown = %+v", out.Breakdown)
 	}
 	if out.Breakdown[0].GithubListPriceUsd == nil || *out.Breakdown[0].GithubListPriceUsd != 57.6 {
 		t.Errorf("breakdown[0].github_list_price_usd = %v", out.Breakdown[0].GithubListPriceUsd)
+	}
+	if sem := out.Breakdown[1]; sem.CiProviderType != "semaphore_ci" || sem.ComparedWith != "Semaphore f1-standard-2" ||
+		sem.HostedListPriceUsd == nil || *sem.HostedListPriceUsd != 0.75 || sem.ProviderFeeUsd == nil || *sem.ProviderFeeUsd != 0.25 ||
+		sem.SavingsPercent == nil || *sem.SavingsPercent != 13 || sem.GithubListPriceUsd != nil {
+		t.Errorf("semaphore breakdown = %+v, want its own f1-standard-2 comparison with the fee", sem)
 	}
 	// Unpriced size: the comparison and queue fields stay absent, not zero.
 	raw := resultText(res)
 	if gpu := strings.Index(raw, `"gpu-1x"`); gpu < 0 || strings.Contains(raw[gpu:], `"savings_percent":0`) {
 		t.Errorf("unpriced size must omit savings_percent rather than report 0: %s", raw)
 	}
-	if out.Pricing.FreeMinutesPerMonth != 3000 || out.Pricing.BaseRateUsdPerMinute != 0.004 || out.Pricing.SpeedupVsHosted != 2 {
+	if out.Pricing.FreeMinutesPerMonth != 3000 || out.Pricing.BaseRateUsdPerMinute != 0.004 {
 		t.Errorf("pricing = %+v", out.Pricing)
 	}
 	if len(out.Pricing.RateCard) != 1 || out.Pricing.RateCard[0].GithubUsdPerMinute != 0.006 {
 		t.Errorf("rate_card = %+v", out.Pricing.RateCard)
+	}
+	if len(out.Pricing.VendorRateCard) != 1 || out.Pricing.VendorRateCard[0].BuildpulseAllInUsdPerMinute != 0.0065 || out.Pricing.VendorRateCard[0].VendorUsdPerMinute != 0.0075 {
+		t.Errorf("vendor_rate_card = %+v", out.Pricing.VendorRateCard)
+	}
+	// The estimate is priced minute for minute: no speed factor reaches the agent.
+	if strings.Contains(raw, "speedup") {
+		t.Errorf("usage output must not carry a speed-up factor: %s", raw)
 	}
 	if out.WebURL != "https://buildpulse.io/organizations/o/runners/usage" {
 		t.Errorf("web_url = %q", out.WebURL)
@@ -298,10 +312,14 @@ func TestEstimateRunnerSavingsPrompt(t *testing.T) {
 		t.Fatalf("GetPrompt: %v", err)
 	}
 	txt := res.Messages[0].Content.(*mcp.TextContent).Text
-	for _, want := range []string{"get_runner_status", "get_runner_usage", "pricing.rate_card", "free_minutes_per_month", "speedup_vs_hosted", "list_recent_submissions", "get_submission_test_results", "setup_url", "/runners/setup", "3,000 free minutes", `organization_id="11111111-1111-1111-1111-111111111111"`} {
+	for _, want := range []string{"get_runner_status", "get_runner_usage", "pricing.rate_card", "free_minutes_per_month", "pricing.vendor_rate_card", "buildpulse_all_in_usd_per_minute", "hosted_list_price_usd", "no speed factor", "list_recent_submissions", "get_submission_test_results", "setup_url", "/runners/setup", "3,000 free minutes", `organization_id="11111111-1111-1111-1111-111111111111"`} {
 		if !strings.Contains(txt, want) {
 			t.Errorf("prompt text missing %q", want)
 		}
+	}
+	// Priced minute for minute against the provider's own machine: no speed-up divisor.
+	if strings.Contains(txt, "speedup") || strings.Contains(txt, "minutes /") {
+		t.Errorf("prompt must not divide minutes by a speed-up factor: %s", txt)
 	}
 	for _, banned := range []string{"$0.004", "$0.006", "0.004", "0.006"} {
 		if strings.Contains(txt, banned) {
